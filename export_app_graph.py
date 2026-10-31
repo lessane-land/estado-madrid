@@ -15,14 +15,9 @@ import sys
 RAIL = {"metro", "metro_ligero", "cercanias"}
 
 
-CIRCULAR = {"metro:L6", "metro:L12"}  # keep in step with Graph.CIRCULAR in around.py
-
-
-def is_loop(line: dict, seqs: list[list[str]]) -> bool:
-    """Circular lines: the itinerary returns to its first stop, or the line is a known ring."""
-    if line["id"] in CIRCULAR or "circular" in (line.get("name") or "").lower():
-        return True
-    return any(len(sq) > 2 and sq[0] == sq[-1] for sq in seqs)
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from around import is_loop  # noqa: E402  (the single definition of "circular", shared with estado.py)
 
 
 def merge_sequences(seqs: list[list[str]]) -> list[str]:
@@ -99,7 +94,7 @@ def main() -> int:
             # Longest sequence per line is enough for segment matching.
             seqs = list(l["sequences"].values())
             item["s"] = merge_sequences(seqs)
-            if is_loop(l, seqs):
+            if is_loop(l["id"], l.get("name"), seqs):
                 item["lp"] = True
         lines.append(item)
     transfers = [{"a": t["a"], "b": t["b"], "at": t["at"]} for t in g["transfers"]

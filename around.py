@@ -30,6 +30,17 @@ def haversine(lat1, lon1, lat2, lon2) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+CIRCULAR = {"metro:L6", "metro:L12"}
+
+
+def is_loop(line_id: str, name: str | None, sequences) -> bool:
+    """The one definition of a circular line, used by the status poller and by the app export (`lp`):
+    a known ring, 'circular' in the name, or an itinerary that returns to its first stop."""
+    if line_id in CIRCULAR or "circular" in (name or "").lower():
+        return True
+    return any(len(sq) > 2 and sq[0] == sq[-1] for sq in sequences)
+
+
 class Graph:
     def __init__(self, path: str = "graph.json"):
         data = json.load(open(path, encoding="utf-8"))
@@ -91,14 +102,9 @@ class Graph:
             "ring3": sorted(ring3.values(), key=lambda r: (MODE_ORDER.index(r["mode"]), r["label"])),
         }
 
-    CIRCULAR = {"metro:L6", "metro:L12"}
-
     def is_loop(self, line_id: str) -> bool:
-        """Circular lines: a known ring, 'circular' in the name, or an itinerary that returns to its first stop."""
         line = self.lines[line_id]
-        if line_id in self.CIRCULAR or "circular" in (line.get("name") or "").lower():
-            return True
-        return any(len(sq) > 2 and sq[0] == sq[-1] for sq in line["sequences"].values())
+        return is_loop(line_id, line.get("name"), line["sequences"].values())
 
     def line_stop_names(self, line_id: str) -> list[str]:
         """Longest sequence of the line, as stop names, for segment matching.
