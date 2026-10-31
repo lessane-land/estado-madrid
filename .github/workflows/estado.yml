@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Poll sources and publish
@@ -32,7 +32,7 @@ jobs:
           ESTADO_OUT: estado.json
         run: python3 -I publish.py
       - name: Keep the last result as an artifact (handy for debugging)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: estado-${{ github.run_id }}
           path: estado.json
