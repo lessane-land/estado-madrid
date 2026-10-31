@@ -264,14 +264,17 @@ ACCENTS = {w.lower().translate(str.maketrans("áéíóúñ", "aeioun")): w for w
     "Nuevos", "Ministerios", "Tribunal", "Noviciado", "Rodríguez", "Manuel", "Becerra", "Suanzes", "Gregorio",
     "Ciudad", "Universitaria", "Vicente", "Aleixandre", "Lucero", "Laguna", "Almendrales", "Opañel", "Abrantes",
     "Mirasierra", "Herrera", "Oria", "Paco", "Lucía", "Jesús", "Cármenes", "Puñonrostro", "Sainz", "Ángel",
+    "Alcorcón", "Móstoles", "Leganés", "Julián", "Núñez", "Malasaña", "Chamberí", "Fermín", "Ángeles", "Cristóbal",
+    "Concepción", "Américas", "Cánovas", "Abrantes", "Pradillo", "Sebastián", "Jiménez", "Mendoza", "Bercial",
+    "Cierva", "Montijo", "Villaviciosa", "Odón", "Boadilla", "Pozuelo", "Aravaca", "Majadahonda", "Rozas", "Tetuán",
 )}
 
 
 def restore_accents(name: str) -> str:
+    fold = str.maketrans("áéíóúñü", "aeiounu")
     def fix(w: str) -> str:
-        key = w.lower()
-        target = ACCENTS.get(key)
-        return target if target and target.lower() != key else w
+        target = ACCENTS.get(w.lower().translate(fold))
+        return target if target and target.lower() != w.lower() else w
     return " ".join(fix(w) for w in name.split(" "))
 
 

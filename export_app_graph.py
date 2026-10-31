@@ -15,27 +15,72 @@ import sys
 RAIL = {"metro", "metro_ligero", "cercanias"}
 
 
+CIRCULAR = {"metro:L6", "metro:L12"}
+
+
+def is_loop(line: dict, seqs: list[list[str]]) -> bool:
+    """Circular lines: the itinerary returns to its first stop, or the line is a known ring."""
+    if line["id"] in CIRCULAR or "circular" in (line.get("name") or "").lower():
+        return True
+    return any(len(sq) > 2 and sq[0] == sq[-1] for sq in seqs)
+
+
 def merge_sequences(seqs: list[list[str]]) -> list[str]:
-    """One ordered list covering every stop of every itinerary. Starts from the longest; each other
-    itinerary (reversed if it runs the other way) has its missing stops inserted after the last stop
-    it shares with the merged list, so branches hang off their junction and termini are kept."""
+    """One ordered list covering every stop of every itinerary of a line.
+
+    Start from the longest itinerary. Then, repeatedly, take the pending itinerary that shares the most
+    stops with the merged list, orient it to run the same way, and splice in its missing stops:
+    the head (before its first shared stop) goes in front of that stop; the middle goes after each
+    predecessor; the tail (after its last shared stop) goes after it, or in front of the whole list
+    when that junction is the first stop (a branch beyond a terminus). Itineraries that share nothing
+    wait for a sibling to anchor them; anything still unanchored is appended."""
     if not seqs:
         return []
-    seqs = sorted(seqs, key=len, reverse=True)
-    merged = list(seqs[0])
-    for other in seqs[1:]:
+    pending = sorted(seqs, key=len, reverse=True)
+    merged = list(pending.pop(0))
+    while pending:
         pos = {s: i for i, s in enumerate(merged)}
-        shared = [pos[s] for s in other if s in pos]
-        if len(shared) >= 2 and sum(1 for a, b in zip(shared, shared[1:]) if b < a) > len(shared) / 2:
+        pending.sort(key=lambda sq: -sum(1 for s in sq if s in pos))
+        other = pending.pop(0)
+        shared = [s for s in other if s in pos]
+        if not shared:
+            if any(any(s in pos for s in sq) for sq in pending):
+                pending.append(other)
+                continue
+            merged.extend(s for s in other if s not in pos)
+            continue
+        if len(shared) >= 2:
+            if sum(1 for a, b in zip(shared, shared[1:]) if pos[b] < pos[a]) > (len(shared) - 1) / 2:
+                other = list(reversed(other))
+        elif other.index(shared[0]) > len(other) / 2:
             other = list(reversed(other))
-        last = -1
-        for s in other:
+
+        idx = [i for i, s in enumerate(other) if s in pos]
+        first_i, last_i = idx[0], idx[-1]
+        head = [s for s in other[:first_i] if s not in pos]
+        tail = [s for s in other[last_i + 1:] if s not in pos]
+        middle = other[first_i:last_i + 1]
+
+        # Head: in front of the first shared stop, keeping its order.
+        anchor = pos[other[first_i]]
+        merged[anchor:anchor] = head
+        pos = {x: i for i, x in enumerate(merged)}
+        # Middle: after the predecessor.
+        last = pos[middle[0]]
+        for s in middle[1:]:
             if s in pos:
                 last = pos[s]
                 continue
             merged.insert(last + 1, s)
             last += 1
             pos = {x: i for i, x in enumerate(merged)}
+        # Tail: beyond the junction, on the side the junction is on.
+        if tail:
+            j = pos[other[last_i]]
+            if j == 0 and len(merged) > 1:
+                merged[0:0] = list(reversed(tail))
+            else:
+                merged[j + 1:j + 1] = tail
     return merged
 
 
@@ -52,7 +97,10 @@ def main() -> int:
         item = {"i": l["id"], "m": l["mode"], "b": l["label"], "n": l["name"], "c": l["color"]}
         if l["mode"] in RAIL:
             # Longest sequence per line is enough for segment matching.
-            item["s"] = merge_sequences(list(l["sequences"].values()))
+            seqs = list(l["sequences"].values())
+            item["s"] = merge_sequences(seqs)
+            if is_loop(l, seqs):
+                item["lp"] = True
         lines.append(item)
     transfers = [{"a": t["a"], "b": t["b"], "at": t["at"]} for t in g["transfers"]
                  if mode_of.get(t["a"]) in RAIL or mode_of.get(t["b"]) in RAIL]
