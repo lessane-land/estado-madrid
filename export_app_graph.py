@@ -15,6 +15,30 @@ import sys
 RAIL = {"metro", "metro_ligero", "cercanias"}
 
 
+def merge_sequences(seqs: list[list[str]]) -> list[str]:
+    """One ordered list covering every stop of every itinerary. Starts from the longest; each other
+    itinerary (reversed if it runs the other way) has its missing stops inserted after the last stop
+    it shares with the merged list, so branches hang off their junction and termini are kept."""
+    if not seqs:
+        return []
+    seqs = sorted(seqs, key=len, reverse=True)
+    merged = list(seqs[0])
+    for other in seqs[1:]:
+        pos = {s: i for i, s in enumerate(merged)}
+        shared = [pos[s] for s in other if s in pos]
+        if len(shared) >= 2 and sum(1 for a, b in zip(shared, shared[1:]) if b < a) > len(shared) / 2:
+            other = list(reversed(other))
+        last = -1
+        for s in other:
+            if s in pos:
+                last = pos[s]
+                continue
+            merged.insert(last + 1, s)
+            last += 1
+            pos = {x: i for i, x in enumerate(merged)}
+    return merged
+
+
 def main() -> int:
     src = sys.argv[1] if len(sys.argv) > 1 else "graph.json"
     dst = sys.argv[2] if len(sys.argv) > 2 else "graph-app.json"
@@ -28,8 +52,7 @@ def main() -> int:
         item = {"i": l["id"], "m": l["mode"], "b": l["label"], "n": l["name"], "c": l["color"]}
         if l["mode"] in RAIL:
             # Longest sequence per line is enough for segment matching.
-            seqs = list(l["sequences"].values())
-            item["s"] = max(seqs, key=len) if seqs else []
+            item["s"] = merge_sequences(list(l["sequences"].values()))
         lines.append(item)
     transfers = [{"a": t["a"], "b": t["b"], "at": t["at"]} for t in g["transfers"]
                  if mode_of.get(t["a"]) in RAIL or mode_of.get(t["b"]) in RAIL]

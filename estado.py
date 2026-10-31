@@ -29,6 +29,7 @@ import urllib.request
 UA = "estado-madrid-prototype/0.1 (personal project)"
 TIMEOUT = 20
 
+RAIL = {"metro", "metro_ligero", "cercanias"}
 MODES = {"Metro": "metro", "ML": "metro_ligero", "EMT": "emt", "Interurbano": "interurbanos", "Cercanias": "cercanias"}
 LEVEL_SCORE = {"Verde": 0, "Amarillo": 1, "Amarillo_Oscuro": 2, "Rojo": 3}
 
@@ -44,6 +45,63 @@ def visible_text(raw: str) -> list[str]:
     raw = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", raw, flags=re.S)
     txt = html.unescape(re.sub(r"<[^>]+>", "\n", raw))
     return [l.strip() for l in txt.split("\n") if l.strip()]
+
+
+# ---------------------------------------------------------------- Dates in notice text
+
+MONTHS = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+          "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12}
+RECOVERY = re.compile(r"recuperan|recuperado|restablec|con normalidad|normalidad en el servicio|finaliza(?:da)? la incidencia", re.I)
+
+
+def expiry(text: str, since: dt.datetime | None, now: dt.datetime) -> dt.datetime | None:
+    """When a notice stops mattering, read from its own words. None means open-ended.
+    'del 10 al 12 de octubre' -> end of 12 Oct. 'los fines de semana del 3-4, 17-18 y 24-25 de octubre' -> end of 25 Oct.
+    'hasta el 4 de noviembre' -> end of 4 Nov. 'hasta finales de año' -> 31 Dec. 'hoy ...' with no dates -> end of the day it was published."""
+    low = text.lower()
+    ref = since or now
+    candidates: list[dt.datetime] = []
+    # Every "day[s] de month" group: numbers before the month name, e.g. "3-4, 17-18 y 24-25 de octubre"
+    for m in re.finditer(r"((?:\d{1,2}\s*(?:[-,]|y|al|a|el|del|de|los|las|d[ií]as?|fines? de semana)\s*)*\d{1,2})\s+de\s+(" + "|".join(MONTHS) + r")(?:\s+de\s+(\d{4}))?", low):
+        days = [int(d) for d in re.findall(r"\d{1,2}", m.group(1)) if 1 <= int(d) <= 31]
+        month = MONTHS[m.group(2)]
+        year = int(m.group(3)) if m.group(3) else ref.year
+        if not m.group(3) and month < ref.month - 6:
+            year += 1
+        for d in days:
+            try:
+                candidates.append(dt.datetime(year, month, d, 23, 59, tzinfo=dt.timezone.utc))
+            except ValueError:
+                pass
+    if "finales de año" in low or "final de año" in low or "fin de año" in low:
+        candidates.append(dt.datetime(ref.year, 12, 31, 23, 59, tzinfo=dt.timezone.utc))
+    if candidates:
+        return max(candidates)
+    if re.search(r"\bhoy\b", low):
+        return ref.replace(hour=23, minute=59, second=0, microsecond=0)
+    return None
+
+
+def incident_key(inc: dict) -> str:
+    return f"{inc['mode']}|{','.join(inc['lines'])}|{inc.get('title') or inc['text'][:80]}"
+
+
+def carry_since(incidents: list[dict], previous: list[dict], now: dt.datetime) -> None:
+    """CRTM gives no timestamps. First time we see a notice we stamp it; later runs keep the stamp."""
+    seen = {incident_key(p): p.get("since") for p in previous if p.get("since")}
+    for inc in incidents:
+        if not inc.get("since"):
+            inc["since"] = seen.get(incident_key(inc)) or now.isoformat()
+
+
+def still_active(inc: dict, now: dt.datetime) -> bool:
+    """Drop recovery notices and anything whose own dates are past."""
+    if RECOVERY.search(inc["text"]):
+        return False
+    since = dt.datetime.fromisoformat(inc["since"]) if inc.get("since") else None
+    until = expiry(inc["text"], since, now)
+    inc["until"] = until.isoformat() if until else None
+    return until is None or until >= now
 
 
 # ---------------------------------------------------------------- Renfe Cercanías
@@ -71,6 +129,7 @@ def renfe_alerts() -> dict:
         start = alert.get("activePeriod", [{}])[0].get("start")
         severity = "rojo" if re.search(r"suspendid|no prestan servicio|interrumpid", text, re.I) else "amarillo"
         out["incidents"].append({
+            "source": "Renfe",
             "mode": "cercanias",
             "lines": lines,
             "severity": severity,
@@ -112,44 +171,90 @@ def crtm_status() -> dict:
         if lm:
             out["levels"][mode] = lm.group(1)
 
-    lines = visible_text(raw)
-    # Incident titles sit between each "<Mode>: Estado en tiempo real" header and the next header.
-    headers = {
-        "Cercanías: Estado en tiempo real": "cercanias",
-        "Autobuses EMT: Estado en tiempo real": "emt",
-        "Metro Ligero/Tranvía: Estado en tiempo real": "metro_ligero",
-        "Metro: Estado en tiempo real": "metro",
-        "Autobuses Interurbanos: Estado en tiempo real": "interurbanos",
-    }
-    current = None
-    seen = set()
-    for l in lines:
-        if l in headers:
-            current = headers[l]
+    # Each mode has its own page with title and body for every notice; bodies name the bus lines.
+    pages = {"cercanias": "avisos-cercanias", "emt": "avisos-emt", "metro_ligero": "avisos-metro-ligero",
+             "metro": "avisos-metro", "interurbanos": "avisos-interurbanos"}
+    for mode, slug in pages.items():
+        try:
+            page = fetch(f"https://www.crtm.es/comunicacion/actualidad-del-servicio/avisos/{slug}/")
+        except Exception:  # noqa: BLE001
             continue
-        if l.startswith("Vover a") or l.startswith("Volver a"):
-            break
-        if current and l not in seen and len(l) < 120 and not l.startswith("Más información") and "no hay incidencias" not in l:
-            if not re.match(r"^(Desvío|Suspensión|Cierre|Corte|Obras|Interrupción|Plan|Huelga|Refuerzo|Cambio|Modificación|Traslado)", l):
-                continue  # body text, not a title
-            seen.add(l)
-            out["incidents"].append(normalise_crtm(current, l))
+        for title, body in crtm_notices(page):
+            out["incidents"].append(normalise_crtm(mode, title, body))
     return out
 
 
-def normalise_crtm(mode: str, title: str) -> dict:
-    lines = re.findall(r"\bL\d{1,2}[AB]?\b|\bC-?\d[ab]?\b|\bML\d\b", title)
-    lines = [l.replace("C-", "C") for l in lines]
-    # EMT titles often list lines in the body; the title alone carries the reason.
-    severity = "rojo" if re.search(r"Suspensi|Cierre|Interrup", title) else "amarillo"
-    seg = re.search(r"(?:L\d{1,2}[AB]?|C\d[ab]?)\s+([^-]+?)\s+-\s+(.+)$", title)
+TITLE = re.compile(r"^(Desvío|Suspensión|Cierre|Corte|Obras|Interrupción|Plan Especial|Huelga|Refuerzo|Cambio|Modificación|Traslado|Incidencia)\b")
+
+
+def crtm_notices(page: str) -> list[tuple[str, str]]:
+    """(title, body) pairs from a CRTM avisos page. Titles repeat (summary list, then detail);
+    the body is the text between a title and the next title or 'Más información'."""
+    lines = visible_text(page)
+    # The notices start right after the "dd/mm/yy hh:mm h" stamp of "Estado del sistema de transporte".
+    try:
+        start = next(i for i, l in enumerate(lines) if re.match(r"\d{2}/\d{2}/\d{2} \d{2}:\d{2} h", l)) + 1
+    except StopIteration:
+        return []
+    notices: dict[str, list[str]] = {}
+    order: list[str] = []
+    current = None
+    for l in lines[start:]:
+        if l.startswith("Vover a") or l.startswith("Volver a") or l == "© CRTM":
+            break
+        if TITLE.match(l) and len(l) < 120:
+            current = l
+            if l not in notices:
+                notices[l] = []
+                order.append(l)
+            continue
+        if l.startswith("Avisos ") or l.startswith("Más información") or "no hay incidencias" in l:
+            continue  # section heading between the title and its body, or the read-more link
+        if current:
+            notices[current].append(l)
+    return [(title, " ".join(notices[title]).strip()) for title in order]
+
+
+def normalise_crtm(mode: str, title: str, body: str = "") -> dict:
+    lines = [l.replace("C-", "C") for l in re.findall(r"\bL\d{1,2}[AB]?\b|\bC-?\d{1,2}[ab]?\b|\bML\d\b", title)]
+    if mode in ("emt", "interurbanos", "urbanos") and not lines:
+        lines = bus_lines_in(body, interurban=(mode == "interurbanos"))
+    if mode == "metro" and not lines:
+        lines = [f"L{n}" for n in re.findall(r"l[ií]nea\s+(\d{1,2})", body, re.I)]
+    severity = "rojo" if re.search(r"Suspensi|Cierre|Interrup|Huelga", title) else "amarillo"
+    seg = re.search(r"(?:L\d{1,2}[AB]?|C\d{1,2}[ab]?)\s+([^-]+?)\s+-\s+(.+)$", title)
+    scope = {"from": seg.group(1).strip(), "to": seg.group(2).strip()} if seg else None
+    if scope is None and body and mode in ("metro", "metro_ligero", "cercanias"):
+        scope = extract_segment(body)
     return {
+        "source": "CRTM",
         "mode": mode,
         "lines": lines,
         "severity": severity,
-        "text": title,
-        "scope": {"from": seg.group(1).strip(), "to": seg.group(2).strip()} if seg else None,
+        "since": None,
+        "title": title,
+        "text": title if not body else f"{title}. {body[:400]}",
+        "scope": scope,
     }
+
+
+def bus_lines_in(body: str, interurban: bool) -> list[str]:
+    """'afectando a las líneas de EMT 36, 39 y N19 e interurbanas 521, 523' -> the right group."""
+    found: list[str] = []
+    key = r"interurban\w*" if interurban else r"(?:EMT|l[ií]neas?)"
+    for m in re.finditer(key + r"[^0-9A-Z]{0,20}((?:\b(?:N?\d{1,3}[A-Z]?|[A-Z]{1,2}\d{1,3}[A-Z]?)\b[\s,]*(?:y|e)?\s*)+)", body):
+        found += re.findall(r"\b(?:N?\d{1,3}[A-Z]?|[A-Z]{1,2}\d{1,3}[A-Z]?)\b", m.group(1))
+    if not found and not interurban:
+        found = re.findall(r"l[ií]neas?\s+((?:\b(?:N?\d{1,3}[A-Z]?|[A-Z]\d{1,2})\b[\s,]*(?:y|e)?\s*)+)", body)
+        found = re.findall(r"\b(?:N?\d{1,3}[A-Z]?|[A-Z]\d{1,2})\b", " ".join(found))
+    # Drop stray numbers that are clearly not lines (stop numbers, distances, years).
+    out = []
+    for f in found:
+        if f.isdigit() and (int(f) > 999 or int(f) == 0):
+            continue
+        if f not in out:
+            out.append(f)
+    return out
 
 
 # ---------------------------------------------------------------- EMT MobilityLabs
@@ -177,8 +282,8 @@ def emt_incidents(lines: list[str]) -> dict:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 body = json.load(r)
             for item in body.get("data", []) or []:
-                out["incidents"].append({"mode": "emt", "lines": [line], "severity": "amarillo",
-                                         "text": json.dumps(item, ensure_ascii=False)[:300], "scope": None})
+                out["incidents"].append({"source": "EMT", "mode": "emt", "lines": [line], "severity": "amarillo",
+                                         "since": None, "text": json.dumps(item, ensure_ascii=False)[:300], "scope": None})
         out["ok"] = True
     except Exception as e:  # noqa: BLE001
         # Public repo, public logs: never echo the exception verbatim, it may contain request headers.
@@ -295,7 +400,7 @@ def for_here(lat: float, lon: float, radius: float, incidents: list[dict], level
             spill.append({"line": r["label"], "mode": r["mode"], "status": "amarillo",
                           "why": f"{r['via_label']} is cut at {r['at']}, where they meet"})
     for line in ring1:
-        if line["status"] == "verde":
+        if line["status"] == "verde" and line["mode"] in RAIL:
             for n in g.neighbours.get(line["line"], []):
                 if n["line"] in red_zone and spills(n["line"], n["at"]):
                     line["status"] = "amarillo"
@@ -322,6 +427,7 @@ def main() -> int:
     ap.add_argument("--radius", type=float, default=600)
     ap.add_argument("--graph", default="graph.json")
     ap.add_argument("--scenario", help="JSON file with invented incidents and levels, replaces the live sources")
+    ap.add_argument("--previous", help="JSON file with the previous run's incidents, to keep 'since' stable")
     args = ap.parse_args()
 
     commute = json.load(open(args.commute)) if args.commute else None
@@ -336,7 +442,14 @@ def main() -> int:
         crtm = crtm_status()
         emt = emt_incidents(commute.get("emt", []) if commute else [])
 
+    now = dt.datetime.now(dt.timezone.utc)
     incidents = renfe["incidents"] + crtm["incidents"] + emt["incidents"]
+    if not args.scenario:
+        previous = json.load(open(args.previous)) if args.previous and os.path.exists(args.previous) else []
+        if isinstance(previous, dict):
+            previous = previous.get("incidents", [])
+        carry_since(incidents, previous, now)
+        incidents = [i for i in incidents if still_active(i, now)]
     status = {
         "generated": dt.datetime.now(dt.timezone.utc).isoformat(),
         "levels": crtm["levels"],

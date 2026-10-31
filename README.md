@@ -27,7 +27,23 @@ python3 estado.py --at 40.4663,-3.6889 --radius 350     # Plaza de Castilla, out
 - **Ring 3**: lines that meet yours. A red line spills amber onto them, but only at interchanges inside the affected segment.
 - **Forecast**: a couple of hand-written rules from the CRTM mode-level traffic light ("Cercanías badly hit, expect Metro crowding"). Short on purpose. Labelled as forecast.
 
-Severity: `rojo` when the text says suspendido / interrumpido / cierre, else `amarillo`.
+Severity: `rojo` when the text says suspendido / interrumpido / cierre / huelga, else `amarillo`.
+
+## Incident shape
+
+```json
+{"source": "CRTM", "mode": "metro", "lines": ["L10"], "severity": "rojo",
+ "title": "Suspensión METRO L10 Cuzco - Nuevos Ministerios",
+ "text": "Suspensión METRO L10 Cuzco - Nuevos Ministerios. Desde el 28 de marzo de 2026 y hasta finales de año...",
+ "scope": {"from": "Cuzco", "to": "Nuevos Ministerios"},
+ "since": "2026-10-31T21:10:02+00:00", "until": "2026-12-31T23:59:00+00:00"}
+```
+
+- `source`: CRTM, Renfe or EMT.
+- `since`: Renfe gives it; CRTM does not, so the first run that sees a notice stamps it and later runs keep the stamp (publish.py reads the previous row).
+- `until`: parsed from the notice's own words ("del 10 al 12 de octubre", "hasta finales de año", "hoy"). Notices past their `until` are dropped; recovery notices ("recuperan", "restablecido", "normalidad") are dropped outright.
+- `lines` for bus notices come from the notice body ("las líneas 001, 1, 2, 3 ... C1 y C2").
+- Spill (a red line turning its neighbours amber) only reaches rail lines, and only at interchanges inside the cut.
 
 ## Sources and their quirks
 

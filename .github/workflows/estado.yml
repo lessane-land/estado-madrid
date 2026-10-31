@@ -2,7 +2,7 @@ name: estado
 
 on:
   schedule:
-    - cron: "*/5 * * * *"        # best effort, GitHub often runs it every 6 to 10 min
+    - cron: "*/10 * * * *"       # GitHub throttles short schedules; */5 fired once in four hours on day one
   workflow_dispatch:
 
 permissions:

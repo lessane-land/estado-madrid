@@ -24,10 +24,29 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
+def previous_from_supabase() -> Path | None:
+    """Last published incidents, so 'since' survives between stateless runs."""
+    url, key = os.environ.get("SUPABASE_URL"), os.environ.get("SUPABASE_SERVICE_KEY")
+    if not (url and key):
+        return None
+    try:
+        req = urllib.request.Request(f"{url}/rest/v1/estado?id=eq.1&select=incidents",
+                                     headers={"apikey": key, "Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            rows = json.load(r)
+        path = Path("previous.json")
+        path.write_text(json.dumps(rows[0]["incidents"] if rows else []), encoding="utf-8")
+        return path
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_estado() -> dict:
     args = [sys.executable, "-I", str(HERE / "estado.py")]
     if (HERE / "commute.json").exists():
         args += ["--commute", str(HERE / "commute.json")]
+    if prev := previous_from_supabase():
+        args += ["--previous", str(prev)]
     out = subprocess.run(args, capture_output=True, text=True, timeout=120, check=True).stdout
     return json.loads(out)
 

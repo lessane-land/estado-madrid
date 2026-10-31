@@ -109,7 +109,7 @@ def import_feed(mode: str, path: Path, graph: dict) -> None:
         graph["stops"][sid] = {
             "id": sid, "mode": mode,
             "code": s.get("stop_code") or s["stop_id"],
-            "name": s["stop_name"].strip().title() if s["stop_name"].isupper() else s["stop_name"].strip(),
+            "name": s["stop_name"].strip(),
             "lat": round(lat, 5), "lon": round(lon, 5),
             "station": f"{mode}:{s['parent_station']}" if s.get("parent_station") else None,
             "lines": [],
@@ -193,7 +193,7 @@ def import_metro_gis(graph: dict) -> None:
         if sid in graph["stops"]:
             continue
         lon, lat = f["geometry"]["coordinates"]
-        graph["stops"][sid] = {"id": sid, "mode": mode, "code": code, "name": (p.get("DENOMINACION") or "").strip().title(),
+        graph["stops"][sid] = {"id": sid, "mode": mode, "code": code, "name": (p.get("DENOMINACION") or "").strip(),
                                "lat": round(lat, 5), "lon": round(lon, 5), "station": sid, "lines": []}
     seqs: dict[tuple[str, str, int], list[tuple[int, str]]] = defaultdict(list)
     for f in tramos["features"]:
@@ -219,6 +219,91 @@ def import_metro_gis(graph: dict) -> None:
     n_lines = sum(1 for l in graph["lines"].values() if l["mode"] == mode)
     n_stops = sum(1 for s in graph["stops"].values() if s["mode"] == mode)
     log(f"  {mode:13} {n_lines:4} lines {n_stops:6} stops  (ArcGIS topology, {time.time() - t0:.1f}s)")
+
+
+PARTICLES = {"de", "del", "la", "las", "los", "el", "y", "e", "en", "a", "al", "o", "u", "da", "do", "das", "dos"}
+ROMAN = re.compile(r"^(?=[ivxlc]+$)i{0,3}(?:v|x|l|c)?i{0,3}$|^(xii|xiii|xi|xii|iv|vi|vii|viii|ix|ii|iii)$", re.I)
+
+
+def smart_title(name: str) -> str:
+    """Spanish title case: 'PINAR DE CHAMARTIN' -> 'Pinar de Chamartin', 'Pio Xii' -> 'Pio XII',
+    'Puerta del Sol/sevilla' -> 'Puerta del Sol/Sevilla'. Accents are restored elsewhere."""
+    def cap(word: str, first: bool) -> str:
+        if not word:
+            return word
+        low = word.lower()
+        if ROMAN.match(low):
+            return low.upper()
+        if low in PARTICLES and not first:
+            return low
+        return low[0].upper() + low[1:]
+    out = []
+    for i, token in enumerate(re.split(r"(\s+)", name.strip())):
+        if not token or token.isspace():
+            out.append(token)
+            continue
+        parts = re.split(r"([/\-\.])", token)
+        rebuilt = "".join(cap(part, i == 0 or j > 0) if part not in "/-." else part for j, part in enumerate(parts))
+        out.append(rebuilt)
+    return "".join(out)
+
+
+# Words the Metro feed strips accents from and no other feed spells for us.
+ACCENTS = {w.lower().translate(str.maketrans("áéíóúñ", "aeioun")): w for w in (
+    "Sofía", "Católicos", "Comunicación", "Joaquín", "María", "José", "Ramón", "García", "Martínez", "Fernández",
+    "Gómez", "López", "Pérez", "Sánchez", "González", "Rodríguez", "Hernández", "Jiménez", "Álvarez", "Aviación",
+    "Estación", "Andrés", "Nicolás", "León", "Inés", "Alcalá", "Peñagrande", "Begoña", "Chamartín", "Batán",
+    "Lavapiés", "Pacífico", "Pirámides", "Ópera", "Núñez", "Balboa", "Marañón", "Bernabéu", "Vicálvaro", "Canillejas",
+    "Príncipe", "Pío", "Alameda", "Osuna", "Antón", "Martín", "Barajas", "Valdebernardo", "Elíptica", "Méndez",
+    "Álvaro", "Carpetana", "Oporto", "Urgel", "Usera", "Legazpi", "Delicias", "Atocha", "Sáinz", "Baranda",
+    "Conde", "Casal", "Sáenz", "Ibiza", "Goya", "Velázquez", "Serrano", "Rubén", "Darío", "Colón", "Iglesia",
+    "Ríos", "Rosas", "Argüelles", "Moncloa", "Metropolitano", "Henares", "Coslada", "Jarama", "Vinateros",
+    "Artilleros", "Pavones", "Valdecarros", "Villaverde", "Hortaleza", "Pitis", "Lacoma", "Avenida", "Ilustración",
+    "Tetuán", "Valdeacederas", "Chueca", "Bilbao", "Quevedo", "Canal", "Islas", "Filipinas", "Guzmán", "Bueno",
+    "Alvarado", "Estrecho", "Duque", "Pastrana", "Parque", "Avenidas", "Diego", "Ventas", "Ascao", "Bambú",
+    "Nuevos", "Ministerios", "Tribunal", "Noviciado", "Rodríguez", "Manuel", "Becerra", "Suanzes", "Gregorio",
+    "Ciudad", "Universitaria", "Vicente", "Aleixandre", "Lucero", "Laguna", "Almendrales", "Opañel", "Abrantes",
+    "Mirasierra", "Herrera", "Oria", "Paco", "Lucía", "Jesús", "Cármenes", "Puñonrostro", "Sainz", "Ángel",
+)}
+
+
+def restore_accents(name: str) -> str:
+    def fix(w: str) -> str:
+        key = w.lower()
+        target = ACCENTS.get(key)
+        return target if target and target.lower() != key else w
+    return " ".join(fix(w) for w in name.split(" "))
+
+
+def fold_name(name: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+def unify_names(graph: dict) -> None:
+    """Across feeds the same station is 'Piramides', 'Pirámides', 'PIRAMIDES'. Pick the best spelling
+    (most accents, sensible case) for every name that folds to the same key, then title-case the rest."""
+    import unicodedata
+    def score(n: str) -> tuple:
+        accents = sum(1 for ch in n if unicodedata.decomposition(ch))
+        shouting = n.isupper()
+        naive_title = n == n.title()
+        return (accents, not shouting, not naive_title, len(n))
+    best: dict[str, str] = {}
+    pool = [s["name"] for s in graph["stops"].values()] + [l["name"] for l in graph["lines"].values()]
+    for n in pool:
+        if not n:
+            continue
+        k = fold_name(n)
+        if k not in best or score(n) > score(best[k]):
+            best[k] = n
+    for s in graph["stops"].values():
+        s["name"] = restore_accents(smart_title(best.get(fold_name(s["name"]), s["name"])))
+    for l in graph["lines"].values():
+        if l["name"]:
+            l["name"] = restore_accents(smart_title(best.get(fold_name(l["name"]), l["name"])))
+    log("  names unified")
 
 
 def build_transfers(graph: dict) -> None:
@@ -282,6 +367,7 @@ def main() -> int:
             download(mode, path)
         import_feed(mode, path, graph)
 
+    unify_names(graph)
     build_transfers(graph)
 
     # Lists are smaller and simpler for clients than dicts keyed by id.

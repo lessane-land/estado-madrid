@@ -18,6 +18,13 @@ Status of Madrid public transport around a point, with impact per line. Read REA
 - `.github/workflows/graph.yml` rebuilds `graph.json` monthly and commits it, which also keeps the schedule alive.
 - The phone reads `GET /rest/v1/estado?id=eq.1` with the anon key. `graph.json` ships inside the app.
 
+## Incident contract with the app
+`source`, `mode`, `lines`, `severity`, `title`, `text`, `scope`, `since`, `until`. The app (madrid-hoy, HoyKit)
+decodes these; adding a field is fine, renaming or removing one needs a matching app change.
+`graph-app.json` rail sequences (`s`) are the merged union of every itinerary of the line (both directions,
+all branches), so every stop that lists a rail line appears in that line's sequence.
+
 ## State
-First push 31 Oct 2026. Sources verified live: CRTM status page and Renfe GTFS-RT (found stale). EMT line incidents untested.
+31 Oct 2026, evening: expiry and recovery filtering, bus lines from CRTM bodies, since carried across runs, rail-only spill,
+names unified across feeds, merged rail sequences. 15 tests. GitHub schedule fired once in four hours: cron is unreliable at */5.
 Next: the iOS app (three rings on a dark map, one sentence, morning notification).
