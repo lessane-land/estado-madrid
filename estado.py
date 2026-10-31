@@ -156,13 +156,19 @@ def normalise_crtm(mode: str, title: str) -> dict:
 
 def emt_incidents(lines: list[str]) -> dict:
     out = {"source": "openapi.emtmadrid.es", "ok": False, "incidents": []}
+    # Registered app (X-ClientId + passKey) wins when present; portal user (email + password) otherwise.
+    client_id, pass_key = os.environ.get("EMT_CLIENT_ID"), os.environ.get("EMT_PASS_KEY")
     email, password = os.environ.get("EMT_EMAIL"), os.environ.get("EMT_PASSWORD")
-    if not (email and password):
-        out["skipped"] = "set EMT_EMAIL and EMT_PASSWORD to include EMT line incidents"
+    if client_id and pass_key:
+        login_headers = {"X-ClientId": client_id, "passKey": pass_key}
+    elif email and password:
+        login_headers = {"email": email, "password": password}
+    else:
+        out["skipped"] = "set EMT_CLIENT_ID and EMT_PASS_KEY (or EMT_EMAIL and EMT_PASSWORD) to include EMT line incidents"
         return out
     try:
         req = urllib.request.Request("https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/",
-                                     headers={"email": email, "password": password, "User-Agent": UA})
+                                     headers={**login_headers, "User-Agent": UA})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             token = json.load(r)["data"][0]["accessToken"]
         for line in lines:
@@ -175,7 +181,8 @@ def emt_incidents(lines: list[str]) -> dict:
                                          "text": json.dumps(item, ensure_ascii=False)[:300], "scope": None})
         out["ok"] = True
     except Exception as e:  # noqa: BLE001
-        out["error"] = str(e)
+        # Public repo, public logs: never echo the exception verbatim, it may contain request headers.
+        out["error"] = f"{type(e).__name__} while talking to EMT"
     return out
 
 

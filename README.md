@@ -35,7 +35,7 @@ Severity: `rojo` when the text says suspendido / interrumpido / cierre, else `am
 - **Renfe GTFS-RT `alerts.json`**: proper feed, Madrid alerts start with `#MadC5`. Found stale (header timestamp three weeks old) on 31 Oct 2026; `sources.renfe.stale` flags it. Do not trust it alone for strikes.
 - **CRTM Metro GTFS**: dated May 2025 and has no trips for L3. Metro therefore comes from the live ArcGIS layers `M4_Estaciones` and `M4_Tramos`, which are current (they include El Casar).
 - **Town buses (`urbanos`)**: every municipality has a line "1", so lines are keyed per town (`urbanos:1:013`).
-- **EMT MobilityLabs**: line incidents need `EMT_EMAIL` and `EMT_PASSWORD`. Endpoint shape untested; see `emt_incidents()`.
+- **EMT MobilityLabs**: line incidents need `EMT_CLIENT_ID` and `EMT_PASS_KEY` (registered app) or, meanwhile, `EMT_EMAIL` and `EMT_PASSWORD`. Endpoint shape untested; see `emt_incidents()`.
 
 ## Running it somewhere
 

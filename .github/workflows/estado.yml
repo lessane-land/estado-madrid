@@ -25,6 +25,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          EMT_CLIENT_ID: ${{ secrets.EMT_CLIENT_ID }}
+          EMT_PASS_KEY: ${{ secrets.EMT_PASS_KEY }}
           EMT_EMAIL: ${{ secrets.EMT_EMAIL }}
           EMT_PASSWORD: ${{ secrets.EMT_PASSWORD }}
           ESTADO_OUT: estado.json
