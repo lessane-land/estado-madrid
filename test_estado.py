@@ -42,6 +42,19 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(lines["L3"]["status"], "rojo")
         self.assertTrue(all(s["mode"] in ("metro", "metro_ligero", "cercanias") for s in h["spill"]))
 
+    def test_loop_cut_goes_the_short_way_round(self):
+        lines, _ = here("40.30993,-3.73403", "metrosur-corte.json", radius=300)  # Getafe Central
+        self.assertEqual(lines["L12"]["status"], "verde")
+        self.assertFalse(lines["L12"]["incidents"][0]["touches_you"])
+
+    def test_loop_cut_across_the_seam_is_red_inside_it(self):
+        # Puerta del Sur is last in the stored list and Parque Lisboa first: the cut crosses the seam.
+        lines, _ = here("40.3466,-3.8277", "metrosur-corte-seam.json", radius=600)  # Alcorcón Central
+        self.assertEqual(lines["L12"]["status"], "rojo")
+        self.assertTrue(lines["L12"]["incidents"][0]["touches_you"])
+        lines, _ = here("40.30993,-3.73403", "metrosur-corte-seam.json", radius=300)  # Getafe Central
+        self.assertEqual(lines["L12"]["status"], "verde")
+
     def test_cercanias_strike_in_alcorcon_warns_metro(self):
         lines, h = here(ALCORCON, "huelga-cercanias.json", radius=900)
         self.assertEqual(lines["C5"]["status"], "rojo")

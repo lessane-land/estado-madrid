@@ -15,7 +15,7 @@ import sys
 RAIL = {"metro", "metro_ligero", "cercanias"}
 
 
-CIRCULAR = {"metro:L6", "metro:L12"}
+CIRCULAR = {"metro:L6", "metro:L12"}  # keep in step with Graph.CIRCULAR in around.py
 
 
 def is_loop(line: dict, seqs: list[list[str]]) -> bool:

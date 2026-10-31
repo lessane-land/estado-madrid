@@ -91,10 +91,22 @@ class Graph:
             "ring3": sorted(ring3.values(), key=lambda r: (MODE_ORDER.index(r["mode"]), r["label"])),
         }
 
+    CIRCULAR = {"metro:L6", "metro:L12"}
+
+    def is_loop(self, line_id: str) -> bool:
+        """Circular lines: a known ring, 'circular' in the name, or an itinerary that returns to its first stop."""
+        line = self.lines[line_id]
+        if line_id in self.CIRCULAR or "circular" in (line.get("name") or "").lower():
+            return True
+        return any(len(sq) > 2 and sq[0] == sq[-1] for sq in line["sequences"].values())
+
     def line_stop_names(self, line_id: str) -> list[str]:
-        """Longest sequence of the line, as stop names, for segment matching."""
+        """Longest sequence of the line, as stop names, for segment matching.
+        A loop that repeats its first stop at the end lists it once."""
         seqs = self.lines[line_id]["sequences"].values()
-        best = max(seqs, key=len) if seqs else []
+        best = list(max(seqs, key=len)) if seqs else []
+        if len(best) > 2 and best[0] == best[-1]:
+            best = best[:-1]
         return [self.stops[s]["name"] for s in best if s in self.stops]
 
 

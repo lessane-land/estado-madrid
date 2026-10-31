@@ -275,7 +275,8 @@ def restore_accents(name: str) -> str:
     def fix(w: str) -> str:
         target = ACCENTS.get(w.lower().translate(fold))
         return target if target and target.lower() != w.lower() else w
-    return " ".join(fix(w) for w in name.split(" "))
+    # Words are separated by spaces, hyphens, slashes or dots: "Ramón y Cajal-Nuñez de Balboa".
+    return "".join(fix(part) if part and part not in " -/." else part for part in re.split(r"([ \-/\.])", name))
 
 
 def fold_name(name: str) -> str:

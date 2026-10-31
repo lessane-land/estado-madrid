@@ -1,0 +1,24 @@
+{
+ "name": "L12 cut Puerta del Sur to Alcorcón Central across the seam",
+ "levels": {
+  "metro": "Amarillo",
+  "metro_ligero": "Verde",
+  "emt": "Verde",
+  "interurbanos": "Verde",
+  "cercanias": "Verde"
+ },
+ "incidents": [
+  {
+   "mode": "metro",
+   "lines": [
+    "L12"
+   ],
+   "severity": "rojo",
+   "text": "Suspensión METRO L12 Puerta del Sur - Alcorcón Central",
+   "scope": {
+    "from": "Puerta del Sur",
+    "to": "Alcorcón Central"
+   }
+  }
+ ]
+}

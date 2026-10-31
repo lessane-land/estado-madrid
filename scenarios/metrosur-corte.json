@@ -1,0 +1,24 @@
+{
+ "name": "L12 cut Puerta del Sur to Parque Lisboa; Getafe is the long way round",
+ "levels": {
+  "metro": "Amarillo",
+  "metro_ligero": "Verde",
+  "emt": "Verde",
+  "interurbanos": "Verde",
+  "cercanias": "Verde"
+ },
+ "incidents": [
+  {
+   "mode": "metro",
+   "lines": [
+    "L12"
+   ],
+   "severity": "rojo",
+   "text": "Suspensión METRO L12 Puerta del Sur - Parque Lisboa",
+   "scope": {
+    "from": "Puerta del Sur",
+    "to": "Parque Lisboa"
+   }
+  }
+ ]
+}

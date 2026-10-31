@@ -334,6 +334,17 @@ def fold(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s).strip()
 
 
+def segment_indices(names: list[str], i: int, j: int, loop: bool) -> list[int]:
+    """Indices of the stretch between two stations. On a loop, the shorter way round."""
+    if not loop or i == j:
+        lo, hi = min(i, j), max(i, j)
+        return list(range(lo, hi + 1))
+    n = len(names)
+    forward = [(i + k) % n for k in range((j - i) % n + 1)]
+    backward = [(j + k) % n for k in range((i - j) % n + 1)]
+    return forward if len(forward) <= len(backward) else backward
+
+
 def for_here(lat: float, lon: float, radius: float, incidents: list[dict], levels: dict, graph_path: str) -> dict:
     """Ring 1 lines coloured by the incidents that touch them, plus one-hop spread."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -357,8 +368,8 @@ def for_here(lat: float, lon: float, radius: float, incidents: list[dict], level
             if scope.get("from") and scope.get("to") and names:
                 try:
                     i, j = names.index(fold(scope["from"])), names.index(fold(scope["to"]))
-                    lo, hi = min(i, j), max(i, j)
-                    hit["touches_you"] = mine in names and lo <= names.index(mine) <= hi
+                    stretch = segment_indices(names, i, j, g.is_loop(line["line"]))
+                    hit["touches_you"] = mine in names and names.index(mine) in stretch
                     hit["segment_known"] = True
                 except ValueError:
                     hit["touches_you"] = None
@@ -386,7 +397,7 @@ def for_here(lat: float, lon: float, radius: float, incidents: list[dict], level
                 zone = set(names)
                 if h.get("segment_known"):
                     i, j = names.index(fold(scope["from"])), names.index(fold(scope["to"]))
-                    zone = set(names[min(i, j):max(i, j) + 1])
+                    zone = {names[k] for k in segment_indices(names, i, j, g.is_loop(line["line"]))}
                 red_zone.setdefault(line["line"], set()).update(zone)
         ring1.append({**line, "status": worst, "incidents": hits})
 
