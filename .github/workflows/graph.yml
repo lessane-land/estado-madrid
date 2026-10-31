@@ -1,0 +1,31 @@
+name: graph
+
+on:
+  schedule:
+    - cron: "17 4 1 * *"         # first of the month, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rebuild graph.json from CRTM
+        run: python3 -I build_graph.py
+      - name: Run the scenario tests against the new graph
+        run: python3 test_estado.py
+      - name: Commit if it changed
+        run: |
+          git config user.name "estado bot"
+          git config user.email "lessane.vanesa@gmail.com"
+          git add graph.json
+          git diff --cached --quiet && echo "graph unchanged" && exit 0
+          git commit -m "Monthly graph rebuild from CRTM"
+          git push

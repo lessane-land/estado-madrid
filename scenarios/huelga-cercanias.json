@@ -1,0 +1,8 @@
+{
+  "name": "Renfe strike, servicios mínimos, Metro normal",
+  "levels": {"metro": "Verde", "metro_ligero": "Verde", "emt": "Verde", "interurbanos": "Verde", "cercanias": "Rojo"},
+  "incidents": [
+    {"mode": "cercanias", "lines": ["C1","C2","C3","C4","C5","C7","C8","C9","C10"], "severity": "rojo",
+     "text": "Huelga de maquinistas. Servicios mínimos del 50 % en hora punta."}
+  ]
+}

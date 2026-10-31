@@ -1,0 +1,8 @@
+{
+  "name": "L3 cut between Embajadores and Sol, everything else normal",
+  "levels": {"metro": "Amarillo", "metro_ligero": "Verde", "emt": "Verde", "interurbanos": "Verde", "cercanias": "Verde"},
+  "incidents": [
+    {"mode": "metro", "lines": ["L3"], "severity": "rojo",
+     "text": "Suspensión METRO L3 Embajadores - Sol", "scope": {"from": "Embajadores", "to": "Sol"}}
+  ]
+}

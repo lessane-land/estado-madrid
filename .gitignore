@@ -1,0 +1,9 @@
+gtfs/
+*.zip
+*.html
+alerts.json
+out.json
+here.json
+commute.json
+__pycache__/
+.env
