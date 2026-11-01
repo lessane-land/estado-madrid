@@ -28,7 +28,12 @@ every stop that lists a rail line is in its sequence; buses: the drawn direction
 `lp` loop flag, `sh` Google encoded polyline (precision 5, simplified to 8 m), `shk: "stops"` when the feed's
 shape was unusable and the path is stop-to-stop straight lines. Metro R has no path.
 
+## Line health
+`line_episodes` (supabase/episodes.sql): one row per line per stretch of trouble, maintained by `episodes.py` from
+publish.py after every poll; 15 min gap tolerance, `until` closes, 120 days kept, anon SELECT. Backfill: the
+`episodes-backfill` workflow replays `estado_history`. Spill is not stored; the app derives it.
+
 ## State
-31 Oct 2026, evening: expiry and recovery filtering, bus lines from CRTM bodies, since carried across runs, rail-only spill,
-names unified across feeds, merged rail sequences. 15 tests. GitHub schedule fired once in four hours: cron is unreliable at */5.
-Next: the iOS app (three rings on a dark map, one sentence, morning notification).
+1 Nov 2026: Supabase pg_cron is the clock (verified every 5 min). Line shapes exported. line_episodes added. 24 tests.
+Names: source casing kept unless shouting; separators and acronyms handled.
+Next: app phase 2 reads line_episodes; EMT app credentials when MobilityLabs approves.

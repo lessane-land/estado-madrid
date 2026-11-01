@@ -109,5 +109,74 @@ class Expiry(unittest.TestCase):
         self.assertFalse(self.m.still_active(inc, self.now))
 
 
+
+class Episodes(unittest.TestCase):
+    def setUp(self):
+        import importlib.util, datetime as dt
+        spec = importlib.util.spec_from_file_location("episodes", HERE / "episodes.py")
+        self.ep = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.ep)
+        self.dt = dt
+        self.t0 = dt.datetime(2026, 11, 2, 8, 0, tzinfo=dt.timezone.utc)
+
+    def inc(self, mode, lines, sev, scope=None, until=None, since=None):
+        return {"mode": mode, "lines": lines, "severity": sev, "scope": scope, "until": until, "since": since,
+                "source": "CRTM", "title": "t", "text": "t"}
+
+    def at(self, minutes):
+        return self.t0 + self.dt.timedelta(minutes=minutes)
+
+    def test_opens_and_closes(self):
+        state = {}
+        cut = self.inc("metro", ["L3"], "rojo", {"from": "Embajadores", "to": "Sol"})
+        self.assertEqual(len(self.ep.advance(state, self.at(0), [cut])["opened"]), 1)
+        self.assertEqual(list(state)[0], ("metro:L3", "Embajadores", "Sol"))
+        self.assertEqual(self.ep.advance(state, self.at(5), [cut])["closed"], [])
+        closed = self.ep.advance(state, self.at(30), [])["closed"]       # gone for 25 min: past the gap
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]["ended"], self.at(5).isoformat())
+        self.assertEqual(state, {})
+
+    def test_short_gap_does_not_close(self):
+        state = {}
+        cut = self.inc("metro", ["L3"], "rojo")
+        self.ep.advance(state, self.at(0), [cut])
+        self.assertEqual(self.ep.advance(state, self.at(10), [])["closed"], [])   # one missed run
+        self.assertEqual(len(self.ep.advance(state, self.at(15), [cut])["updated"]), 1)
+        self.assertEqual(len(state), 1)
+
+    def test_new_stretch_is_new_episode(self):
+        state = {}
+        self.ep.advance(state, self.at(0), [self.inc("metro", ["L3"], "rojo", {"from": "Embajadores", "to": "Sol"})])
+        ch = self.ep.advance(state, self.at(5), [self.inc("metro", ["L3"], "rojo", {"from": "Sol", "to": "Moncloa"})])
+        self.assertEqual(len(ch["opened"]), 1)
+        self.assertEqual(len(state), 2)
+
+    def test_worst_severity_kept(self):
+        state = {}
+        self.ep.advance(state, self.at(0), [self.inc("cercanias", ["C5"], "amarillo")])
+        self.ep.advance(state, self.at(5), [self.inc("cercanias", ["C5"], "rojo")])
+        self.ep.advance(state, self.at(10), [self.inc("cercanias", ["C5"], "amarillo")])
+        self.assertEqual(list(state.values())[0]["severity"], "Rojo")
+
+    def test_until_closes_at_until(self):
+        state = {}
+        until = self.at(60).isoformat()
+        self.ep.advance(state, self.at(0), [self.inc("emt", ["27"], "amarillo", until=until)])
+        closed = self.ep.advance(state, self.at(120), [])["closed"]
+        self.assertEqual(closed[0]["ended"], until)
+
+    def test_one_notice_many_lines(self):
+        state = {}
+        ch = self.ep.advance(state, self.at(0), [self.inc("emt", ["1", "2", "C1"], "amarillo")])
+        self.assertEqual(sorted(e["line"] for e in ch["opened"]), ["emt:1", "emt:2", "emt:C1"])
+
+    def test_since_sets_started(self):
+        state = {}
+        since = self.at(-30).isoformat()
+        ch = self.ep.advance(state, self.at(0), [self.inc("cercanias", ["C4"], "amarillo", since=since)])
+        self.assertEqual(ch["opened"][0]["started"], since)
+
+
 if __name__ == "__main__":
     unittest.main()

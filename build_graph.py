@@ -305,26 +305,39 @@ PARTICLES = {"de", "del", "la", "las", "los", "el", "y", "e", "en", "a", "al", "
 ROMAN = re.compile(r"^(?=[ivxlc]+$)i{0,3}(?:v|x|l|c)?i{0,3}$|^(xii|xiii|xi|xii|iv|vi|vii|viii|ix|ii|iii)$", re.I)
 
 
+ACRONYMS = {"FFCC", "RENFE", "EMT", "CRTM", "URJC", "UAM", "UCM", "UNED", "UC3M", "UPM", "AVE", "PAU", "DGT", "INEF",
+            "IES", "CEIP", "EOI", "RTVE", "TVE", "ONCE", "CC", "IFEMA", "ITV", "UE", "AENA", "PP", "SS", "ZAL", "ZOCO"}
+
+
 def smart_title(name: str) -> str:
-    """Spanish title case: 'PINAR DE CHAMARTIN' -> 'Pinar de Chamartin', 'Pio Xii' -> 'Pio XII',
-    'Puerta del Sol/sevilla' -> 'Puerta del Sol/Sevilla'. Accents are restored elsewhere."""
-    def cap(word: str, first: bool) -> str:
-        if not word:
-            return word
-        low = word.lower()
-        if ROMAN.match(low):
-            return low.upper()
-        if low in PARTICLES and not first:
-            return low
-        return low[0].upper() + low[1:]
+    """Spanish title case for SHOUTING names only: 'PINAR DE CHAMARTIN' -> 'Pinar de Chamartin',
+    'L1 CIRCULAR (FFCC-MORERAS-FFCC)' -> 'L1 Circular (FFCC-Moreras-FFCC)', 'PLAZA - LOS MOLINOS' -> 'Plaza - Los Molinos'.
+    Names that already carry mixed case come from a feed that cased them on purpose and are left alone."""
+    letters = [ch for ch in name if ch.isalpha()]
+    if letters and sum(1 for ch in letters if ch.isupper()) / len(letters) < 0.7:
+        return name   # cased on purpose by its feed
     out = []
-    for i, token in enumerate(re.split(r"(\s+)", name.strip())):
-        if not token or token.isspace():
+    first = True
+    for token in re.split(r"(\s+|[/\-\.·()])", name.strip()):
+        if token is None or token == "":
+            continue
+        if token.isspace():
             out.append(token)
             continue
-        parts = re.split(r"([/\-\.])", token)
-        rebuilt = "".join(cap(part, i == 0 or j > 0) if part not in "/-." else part for j, part in enumerate(parts))
-        out.append(rebuilt)
+        if token in "/-.·()":
+            out.append(token)
+            first = True          # the next word starts a new part of the name
+            continue
+        low = token.lower()
+        if token.upper() in ACRONYMS:
+            out.append(token.upper())
+        elif ROMAN.match(low):
+            out.append(low.upper())
+        elif low in PARTICLES and not first:
+            out.append(low)
+        else:
+            out.append(low[0].upper() + low[1:])
+        first = False
     return "".join(out)
 
 
@@ -348,6 +361,33 @@ ACCENTS = {w.lower().translate(str.maketrans("áéíóúñ", "aeioun")): w for w
     "Concepción", "Américas", "Cánovas", "Abrantes", "Pradillo", "Sebastián", "Jiménez", "Mendoza", "Bercial",
     "Cierva", "Montijo", "Villaviciosa", "Odón", "Boadilla", "Pozuelo", "Aravaca", "Majadahonda", "Rozas", "Tetuán",
 )}
+
+
+def fix_case_edges(name: str) -> str:
+    """For names that keep their feed's casing: a word right after a separator starts with a capital
+    ('Sol/sevilla' -> 'Sol/Sevilla', '- los Molinos' -> '- Los Molinos'), and a shouted word inside a
+    mixed-case name is tamed ('MADRID (Plaza Elíptica)' -> 'Madrid (Plaza Elíptica)') unless it is an acronym."""
+    parts = re.split(r"(\s+|[/\-\.·()])", name)
+    out = []
+    after_sep = True
+    for token in parts:
+        if not token:
+            continue
+        if token.isspace():
+            out.append(token)
+            continue
+        if token in "/-.·()":
+            out.append(token)
+            after_sep = True
+            continue
+        w = token
+        if w.isupper() and len(w) >= 4 and w not in ACRONYMS and not ROMAN.match(w.lower()):
+            w = w[0] + w[1:].lower()
+        if after_sep and w[0].islower():
+            w = w[0].upper() + w[1:]
+        out.append(w)
+        after_sep = False
+    return "".join(out)
 
 
 def restore_accents(name: str) -> str:
@@ -383,10 +423,10 @@ def unify_names(graph: dict) -> None:
         if k not in best or score(n) > score(best[k]):
             best[k] = n
     for s in graph["stops"].values():
-        s["name"] = restore_accents(smart_title(best.get(fold_name(s["name"]), s["name"])))
+        s["name"] = restore_accents(fix_case_edges(smart_title(best.get(fold_name(s["name"]), s["name"]))))
     for l in graph["lines"].values():
         if l["name"]:
-            l["name"] = restore_accents(smart_title(best.get(fold_name(l["name"]), l["name"])))
+            l["name"] = restore_accents(fix_case_edges(smart_title(best.get(fold_name(l["name"]), l["name"]))))
     log("  names unified")
 
 

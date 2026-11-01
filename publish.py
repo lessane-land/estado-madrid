@@ -82,10 +82,22 @@ def to_gist(status: dict) -> None:
         print("gist", r.status)
 
 
+def to_episodes(status: dict) -> None:
+    if not (os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_KEY")):
+        return
+    try:
+        sys.path.insert(0, str(HERE))
+        import episodes
+        print(episodes.update_from_run(status))
+    except Exception as e:  # noqa: BLE001
+        print(f"episodes: skipped ({type(e).__name__})")
+
+
 def main() -> int:
     status = run_estado()
     to_file(status)
     to_supabase(status)
+    to_episodes(status)
     to_gist(status)
     n = len(status["incidents"])
     print(f"{status['generated']} levels={status['levels']} incidents={n}")
