@@ -57,6 +57,11 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
     for inc in incidents:
         if inc.get("severity") not in SEV_RANK or inc.get("upcoming"):
             continue
+        since = parse_ts(inc.get("since"))
+        if since and since > now:
+            continue      # announced for later (rows written before the upcoming flag existed)
+        if inc.get("source") == "EMT" and not inc.get("guid"):
+            continue      # first EMT rows, before the parser read the RSS items properly
         for label in inc.get("lines") or []:
             key = episode_key(inc, label)
             cur = seen.get(key)
