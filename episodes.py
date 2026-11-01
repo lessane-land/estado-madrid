@@ -51,15 +51,33 @@ def episode_key(inc: dict, label: str) -> tuple:
     return (line_id(inc["mode"], label), scope.get("from"), scope.get("to"))
 
 
+def _rules():
+    """estado.py's still_active, so old history rows are judged by today's expiry rules."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("estado_rules", os.path.join(os.path.dirname(os.path.abspath(__file__)), "estado.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.still_active
+
+
+_STILL_ACTIVE = None
+
+
 def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
     """Apply one status row to the open episodes.
 
     state: {key: episode dict with started, last_seen, severity, until, ...}
     Returns {"opened": [...], "updated": [...], "closed": [...]} with the episode dicts affected.
     """
+    global _STILL_ACTIVE
+    if _STILL_ACTIVE is None:
+        _STILL_ACTIVE = _rules()
     seen: dict[tuple, dict] = {}
     for inc in incidents:
         if inc.get("severity") not in SEV_RANK or inc.get("upcoming"):
+            continue
+        inc = dict(inc)
+        if not _STILL_ACTIVE(inc, now):     # recomputes until with the current rules
             continue
         since = parse_ts(inc.get("since"))
         if since and since > now:
@@ -79,6 +97,8 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
     # Close what is gone (beyond the gap) or expired.
     for key, ep in list(state.items()):
         inc = seen.get(key)
+        if inc is not None and inc.get("until"):
+            ep["until"] = inc["until"]          # rules may have narrowed it since the episode opened
         until = parse_ts(ep.get("until"))
         if inc is None:
             if until and until <= now:

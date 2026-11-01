@@ -49,6 +49,10 @@ def visible_text(raw: str) -> list[str]:
 
 # ---------------------------------------------------------------- Dates in notice text
 
+from zoneinfo import ZoneInfo
+
+MADRID = ZoneInfo("Europe/Madrid")
+
 MONTHS = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
           "septiembre": 9, "setiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12}
 RECOVERY = re.compile(r"recuperan|recuperado|restablec|con normalidad|normalidad en el servicio|finaliza(?:da)? la incidencia", re.I)
@@ -68,17 +72,21 @@ def expiry(text: str, since: dt.datetime | None, now: dt.datetime) -> dt.datetim
         year = int(m.group(3)) if m.group(3) else ref.year
         if not m.group(3) and month < ref.month - 6:
             year += 1
+        # A time range right after the date ("el 1 de noviembre de 11:30 a 14:30 horas") gives the exact end.
+        tail = low[m.end():m.end() + 60]
+        tr = re.search(r"(?:de|desde las?)\s*\d{1,2}[:.]\d{2}\s*(?:a|hasta las?)\s*(\d{1,2})[:.](\d{2})", tail)
+        end_h, end_m = (int(tr.group(1)), int(tr.group(2))) if tr else (23, 59)
         for d in days:
             try:
-                candidates.append(dt.datetime(year, month, d, 23, 59, tzinfo=dt.timezone.utc))
+                candidates.append(dt.datetime(year, month, d, end_h, end_m, tzinfo=MADRID).astimezone(dt.timezone.utc))
             except ValueError:
                 pass
     if "finales de año" in low or "final de año" in low or "fin de año" in low:
-        candidates.append(dt.datetime(ref.year, 12, 31, 23, 59, tzinfo=dt.timezone.utc))
+        candidates.append(dt.datetime(ref.year, 12, 31, 23, 59, tzinfo=MADRID).astimezone(dt.timezone.utc))
     if candidates:
         return max(candidates)
     if re.search(r"\bhoy\b", low):
-        return ref.replace(hour=23, minute=59, second=0, microsecond=0)
+        return ref.astimezone(MADRID).replace(hour=23, minute=59, second=0, microsecond=0).astimezone(dt.timezone.utc)
     return None
 
 
@@ -99,7 +107,14 @@ def still_active(inc: dict, now: dt.datetime) -> bool:
     if RECOVERY.search(inc["text"]):
         return False
     since = dt.datetime.fromisoformat(inc["since"]) if inc.get("since") else None
-    until = expiry(inc["text"], since, now)
+    stated = dt.datetime.fromisoformat(inc["until"]) if inc.get("until") else None
+    from_text = expiry(inc["text"], since, now)
+    # The source's own field wins; text only fills a missing one, or narrows a date-only one
+    # (EMT gives the day in rssAfectaHasta and the hours in the text).
+    if stated and from_text and from_text < stated and from_text.date() == stated.astimezone(MADRID).date():
+        until = from_text
+    else:
+        until = stated or from_text
     inc["until"] = until.isoformat() if until else None
     return until is None or until >= now
 
@@ -433,7 +448,7 @@ def _emt_date(value) -> str | None:
     s = str(value).strip()
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d"):
         try:
-            return dt.datetime.strptime(s[:19], fmt).replace(tzinfo=dt.timezone(dt.timedelta(hours=1))).astimezone(dt.timezone.utc).isoformat()
+            return dt.datetime.strptime(s[:19], fmt).replace(tzinfo=MADRID).astimezone(dt.timezone.utc).isoformat()
         except ValueError:
             continue
     for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z"):

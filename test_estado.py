@@ -97,6 +97,22 @@ class Expiry(unittest.TestCase):
         since = self.dt.datetime(2026, 10, 7, 7, 0, tzinfo=self.dt.timezone.utc)
         self.assertEqual(self.until("tren que hoy inicia su recorrido en Tres Cantos", since).day, 7)
 
+    def test_time_range_on_the_day(self):
+        u = self.until("El 1 de noviembre de 11:30 a 14:30 horas aproximadamente, las líneas 001, 002")
+        self.assertEqual(u.isoformat(), "2026-11-01T13:30:00+00:00")   # 14:30 Madrid, winter time
+
+    def test_source_until_not_overwritten(self):
+        inc = {"text": "El 4 de noviembre las líneas 1 y 2 sufrirán desvíos", "since": None,
+               "until": "2026-11-04T10:00:00+00:00"}
+        self.m.still_active(inc, self.now)
+        self.assertEqual(inc["until"], "2026-11-04T10:00:00+00:00")
+
+    def test_text_hours_narrow_a_date_only_until(self):
+        inc = {"text": "El 1 de noviembre de 11:30 a 14:30 horas, desvíos", "since": None,
+               "until": "2026-11-01T22:59:00+00:00"}
+        self.m.still_active(inc, self.now)
+        self.assertEqual(inc["until"], "2026-11-01T13:30:00+00:00")
+
     def test_open_ended(self):
         self.assertIsNone(self.until("Suspensión METRO L10 Cuzco - Nuevos Ministerios"))
 
