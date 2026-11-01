@@ -339,22 +339,24 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
     refreshed = set(todo) if out["ok"] else set()
     have = {i.get("guid") for i in out["incidents"]}
     for inc in previous:
-        if inc.get("source") != "EMT" or not inc.get("checked") or inc.get("guid") in have:
+        if inc.get("source") != "EMT" or not inc.get("checked") or not inc.get("guid") or inc.get("guid") in have:
+            continue
+        if EMT_CHANNEL.search(inc.get("title") or "") or EMT_NOT_DISRUPTION.search(inc.get("title") or ""):
             continue
         if set(inc.get("lines") or []) & refreshed:
             continue
         checked = dt.datetime.fromisoformat(inc["checked"])
         if now - checked <= dt.timedelta(minutes=EMT_REFRESH_MINUTES):
             out["incidents"].append(inc)
+            have.add(inc["guid"])
             out["carried"] += 1
     return out
 
 
-EMT_EFFECT_SEVERITY = {
-    "NO_SERVICE": "rojo", "REDUCED_SERVICE": "amarillo", "SIGNIFICANT_DELAYS": "amarillo", "DETOUR": "amarillo",
-    "MODIFIED_SERVICE": "amarillo", "STOP_MOVED": "amarillo", "OTHER_EFFECT": "amarillo", "UNKNOWN_EFFECT": "amarillo",
-    "ADDITIONAL_SERVICE": None,   # more buses is not trouble
-}
+# Not disruption: dropped before they reach the row (and so before line_episodes).
+EMT_NOT_DISRUPTION = re.compile(
+    r"^(refuerzo|cambio( de)? horario|horario|servicio especial|nueva l[ií]nea|ampliaci[oó]n|informaci[oó]n)", re.I)
+EMT_CHANNEL = re.compile(r"canal de noticias|informaciones de inter[eé]s para el cliente", re.I)
 
 
 def emt_notice(item: dict, polled_line: str, now: dt.datetime) -> dict | None:
@@ -363,12 +365,16 @@ def emt_notice(item: dict, polled_line: str, now: dt.datetime) -> dict | None:
     title = re.sub(r"\s+", " ", str(item.get("title") or "")).strip()
     desc = re.sub(r"<[^>]+>", " ", str(item.get("description") or ""))
     desc = re.sub(r"\s+", " ", html.unescape(desc)).strip()
-    effect = str(item.get("GoogleTransitEffect") or "").upper()
-    severity = EMT_EFFECT_SEVERITY.get(effect, "amarillo")
-    if severity is None or re.match(r"refuerzo", title, re.I):
+    if not title or EMT_CHANNEL.search(title) or EMT_CHANNEL.search(desc[:80]):
         return None
-    if not severity and re.search(r"suspend|interrump|sin servicio", desc, re.I):
+    if EMT_NOT_DISRUPTION.search(title):
+        return None
+    # EMT's own effect codes: "04 - DESVÍO SOBREVENIDO", "05 - DESVÍO PROGRAMADO", "07 - MODIFICACIÓN DEL SERVICIO".
+    effect = re.sub(r"\s+", " ", str(item.get("GoogleTransitEffect") or "")).strip()
+    if re.search(r"SIN SERVICIO|SUSPENSI|INTERRUP", effect, re.I) or re.search(r"suspend|interrump|sin servicio", desc, re.I):
         severity = "rojo"
+    else:
+        severity = "amarillo"
     lines = bus_lines_in(desc, interurban=False)
     if polled_line not in lines:
         lines.insert(0, polled_line)

@@ -178,5 +178,33 @@ class Episodes(unittest.TestCase):
         self.assertEqual(ch["opened"][0]["started"], since)
 
 
+
+class EmtNotices(unittest.TestCase):
+    def setUp(self):
+        import importlib.util, datetime as dt
+        spec = importlib.util.spec_from_file_location("estado", HERE / "estado.py")
+        self.m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.m)
+        self.now = dt.datetime(2026, 11, 1, 17, 0, tzinfo=dt.timezone.utc)
+
+    def test_channel_header_dropped(self):
+        item = {"title": "Canal de Noticias de la Empresa Municipal de Transportes de Madrid",
+                "description": "Informaciones de interés para el cliente de EMT de Madrid"}
+        self.assertIsNone(self.m.emt_notice(item, "27", self.now))
+
+    def test_information_dropped(self):
+        for title in ("Refuerzo de líneas: Festividad Todos los Santos", "Cambio Horario Invierno: Ajustes horarios",
+                      "Cambio de Horarios. Afectada línea 17 de EMT.", "Servicio Especial: SE [Canillejas – Estadio Metropolitano]."):
+            self.assertIsNone(self.m.emt_notice({"title": title, "description": "x", "guid": title}, "27", self.now), title)
+
+    def test_detour_kept_with_its_lines(self):
+        item = {"guid": "g1", "title": "Manifestación en Princesa y Gran Vía. Afectadas 27 líneas de EMT.",
+                "description": "las líneas 001, 002, 1, 2, C1 y C2 sufrirán retenciones.",
+                "GoogleTransitEffect": "05 - DESVÍO PROGRAMADO", "rssAfectaDesde": "2026-11-01 11:30:00"}
+        n = self.m.emt_notice(item, "27", self.now)
+        self.assertEqual(n["severity"], "amarillo")
+        self.assertTrue({"001", "1", "C2", "27"} <= set(n["lines"]))
+
+
 if __name__ == "__main__":
     unittest.main()
