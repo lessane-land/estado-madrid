@@ -22,7 +22,11 @@ import sys
 import urllib.parse
 import urllib.request
 
+import re
+
 GAP = dt.timedelta(minutes=15)
+# Same rule as estado.py EMT_NOT_DISRUPTION, applied here too because older history rows predate it.
+NOT_DISRUPTION = re.compile(r"^(refuerzo|cambio( de)? horario|horario|servicio especial|nueva l[ií]nea|ampliaci[oó]n|informaci[oó]n)", re.I)
 KEEP = dt.timedelta(days=120)
 SEV_RANK = {"amarillo": 1, "rojo": 2}
 
@@ -60,6 +64,8 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
         since = parse_ts(inc.get("since"))
         if since and since > now:
             continue      # announced for later (rows written before the upcoming flag existed)
+        if inc.get("source") == "EMT" and NOT_DISRUPTION.search(inc.get("title") or ""):
+            continue
         if inc.get("source") == "EMT" and not inc.get("guid"):
             continue      # first EMT rows, before the parser read the RSS items properly
         for label in inc.get("lines") or []:
