@@ -387,7 +387,24 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
             out["incidents"].append(inc)
             have.add(inc["guid"])
             out["carried"] += 1
+    out["incidents"] = merge_same_notice(out["incidents"])
     return out
+
+
+def merge_same_notice(incidents: list[dict]) -> list[dict]:
+    """EMT sometimes publishes one notice twice under different guids, worded slightly differently
+    ("Del 4 al 6 de noviembre" / "De 9:00 horas del día 4 a 9:00 horas del día 6"). Same title and same
+    window is the same notice: keep the first, join the lines."""
+    merged: dict[tuple, dict] = {}
+    for inc in incidents:
+        key = (inc.get("title"), inc.get("since"), inc.get("until"))
+        if key in merged:
+            for l in inc.get("lines") or []:
+                if l not in merged[key]["lines"]:
+                    merged[key]["lines"].append(l)
+        else:
+            merged[key] = inc
+    return list(merged.values())
 
 
 # Not disruption: dropped before they reach the row (and so before line_episodes).

@@ -222,6 +222,13 @@ class EmtNotices(unittest.TestCase):
                       "Cambio de Horarios. Afectada línea 17 de EMT.", "Servicio Especial: SE [Canillejas – Estadio Metropolitano]."):
             self.assertIsNone(self.m.emt_notice({"title": title, "description": "x", "guid": title}, "27", self.now), title)
 
+    def test_same_notice_twice_is_merged(self):
+        a = {"guid": "a", "title": "Supresión de Parada: Paseo de la Castellana.", "since": "s", "until": "u", "lines": ["7", "14"]}
+        b = {"guid": "b", "title": "Supresión de Parada: Paseo de la Castellana.", "since": "s", "until": "u", "lines": ["14", "27"]}
+        out = self.m.merge_same_notice([a, b])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["lines"], ["7", "14", "27"])
+
     def test_detour_kept_with_its_lines(self):
         item = {"guid": "g1", "title": "Manifestación en Princesa y Gran Vía. Afectadas 27 líneas de EMT.",
                 "description": "las líneas 001, 002, 1, 2, C1 y C2 sufrirán retenciones.",
