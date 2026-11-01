@@ -119,7 +119,8 @@ class Expiry(unittest.TestCase):
 
     def test_window_start_desde(self):
         s = self.m.window_start("Desde el 28 de marzo de 2026 y hasta finales de año, quedará interrumpido", self.now)
-        self.assertEqual((s.year, s.month, s.day), (2026, 3, 28))
+        local = s.astimezone(self.m.MADRID)
+        self.assertEqual((local.year, local.month, local.day, local.hour), (2026, 3, 28, 0))
 
     def test_open_ended(self):
         self.assertIsNone(self.until("Suspensión METRO L10 Cuzco - Nuevos Ministerios"))
