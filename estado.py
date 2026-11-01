@@ -292,6 +292,7 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
 
     slot = (now.minute // 5) % EMT_SLOTS
     todo = [l for i, l in enumerate(lines) if i % EMT_SLOTS == slot]
+    by_guid: dict[str, dict] = {}
     try:
         req = urllib.request.Request("https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/",
                                      headers={**login_headers, "User-Agent": UA})
@@ -316,27 +317,29 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
                     continue
                 if item.get("item") is not None or item.get("items") is not None:
                     continue   # a channel wrapper, not a notice
-                title = str(item.get("title") or item.get("name") or item.get("description") or "")[:120]
-                text = str(item.get("description") or item.get("text") or title)
-                since = item.get("dateStart") or item.get("startDate") or item.get("dateIni") or item.get("fechaInicio")
-                until = item.get("dateEnd") or item.get("endDate") or item.get("dateFin") or item.get("fechaFin")
-                out["incidents"].append({
-                    "source": "EMT", "mode": "emt", "lines": [line],
-                    "severity": "rojo" if re.search(r"suspend|interrump|sin servicio", text, re.I) else "amarillo",
-                    "since": _emt_date(since), "until": _emt_date(until),
-                    "title": title, "text": f"{title}. {text}"[:500] if text != title else title,
-                    "scope": None, "checked": now.isoformat(),
-                })
+                notice = emt_notice(item, line, now)
+                if notice is None:
+                    continue
+                guid = notice.pop("_guid")
+                if guid in by_guid:
+                    for l in notice["lines"]:
+                        if l not in by_guid[guid]["lines"]:
+                            by_guid[guid]["lines"].append(l)
+                else:
+                    by_guid[guid] = notice
+        out["incidents"] = list(by_guid.values())
         out["ok"] = True
     except Exception as e:  # noqa: BLE001
         # Public repo, public logs: never echo the exception verbatim, it may contain request headers.
         out["error"] = f"{type(e).__name__} while talking to EMT"
         todo = []          # nothing was refreshed; carry everything that is still young
 
-    # Carry the previous row's EMT incidents for lines not refreshed this run.
+    # Carry the previous row's EMT notices that this run did not get a fresh answer about: a notice is
+    # refreshed when any of its lines was polled (it would have come back if still published).
     refreshed = set(todo) if out["ok"] else set()
+    have = {i.get("guid") for i in out["incidents"]}
     for inc in previous:
-        if inc.get("source") != "EMT" or not inc.get("checked"):
+        if inc.get("source") != "EMT" or not inc.get("checked") or inc.get("guid") in have:
             continue
         if set(inc.get("lines") or []) & refreshed:
             continue
@@ -345,6 +348,41 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
             out["incidents"].append(inc)
             out["carried"] += 1
     return out
+
+
+EMT_EFFECT_SEVERITY = {
+    "NO_SERVICE": "rojo", "REDUCED_SERVICE": "amarillo", "SIGNIFICANT_DELAYS": "amarillo", "DETOUR": "amarillo",
+    "MODIFIED_SERVICE": "amarillo", "STOP_MOVED": "amarillo", "OTHER_EFFECT": "amarillo", "UNKNOWN_EFFECT": "amarillo",
+    "ADDITIONAL_SERVICE": None,   # more buses is not trouble
+}
+
+
+def emt_notice(item: dict, polled_line: str, now: dt.datetime) -> dict | None:
+    """One MobilityLabs RSS item -> one incident. Lines come from the text ('las líneas 001, 002, 1, 2 ... C1 y C2'),
+    the polled line always included. Window from rssAfectaDesde / rssAfectaHasta. Effect from GoogleTransitEffect."""
+    title = re.sub(r"\s+", " ", str(item.get("title") or "")).strip()
+    desc = re.sub(r"<[^>]+>", " ", str(item.get("description") or ""))
+    desc = re.sub(r"\s+", " ", html.unescape(desc)).strip()
+    effect = str(item.get("GoogleTransitEffect") or "").upper()
+    severity = EMT_EFFECT_SEVERITY.get(effect, "amarillo")
+    if severity is None or re.match(r"refuerzo", title, re.I):
+        return None
+    if not severity and re.search(r"suspend|interrump|sin servicio", desc, re.I):
+        severity = "rojo"
+    lines = bus_lines_in(desc, interurban=False)
+    if polled_line not in lines:
+        lines.insert(0, polled_line)
+    since = _emt_date(item.get("rssAfectaDesde")) or _emt_date(item.get("pubDate")) or now.isoformat()
+    until = _emt_date(item.get("rssAfectaHasta"))
+    return {
+        "_guid": str(item.get("guid") or item.get("link") or title),
+        "guid": str(item.get("guid") or item.get("link") or title),
+        "source": "EMT", "mode": "emt", "lines": lines, "severity": severity,
+        "since": since, "until": until,
+        "title": title[:160],
+        "text": f"{title}. {desc}"[:600] if desc and desc != title else title,
+        "scope": None, "effect": effect or None, "checked": now.isoformat(),
+    }
 
 
 def emt_flatten(data) -> list[dict]:
@@ -387,9 +425,14 @@ def _emt_date(value) -> str | None:
     if not value:
         return None
     s = str(value).strip()
-    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d"):
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d"):
         try:
-            return dt.datetime.strptime(s[:19], fmt).replace(tzinfo=dt.timezone.utc).isoformat()
+            return dt.datetime.strptime(s[:19], fmt).replace(tzinfo=dt.timezone(dt.timedelta(hours=1))).astimezone(dt.timezone.utc).isoformat()
+        except ValueError:
+            continue
+    for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z"):
+        try:
+            return dt.datetime.strptime(s, fmt).astimezone(dt.timezone.utc).isoformat()
         except ValueError:
             continue
     return None
