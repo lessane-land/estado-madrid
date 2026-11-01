@@ -90,6 +90,28 @@ def expiry(text: str, since: dt.datetime | None, now: dt.datetime) -> dt.datetim
     return None
 
 
+def window_start(text: str, ref: dt.datetime) -> dt.datetime | None:
+    """When a notice comes into force, from its words: 'El 1 de noviembre de 11:30 a 14:30' -> 1 Nov 11:30 Madrid.
+    'Desde el 28 de marzo' -> 28 Mar 00:00. The earliest date mentioned; None when the text names no date."""
+    low = text.lower()
+    best = None
+    for m in re.finditer(r"(\d{1,2})(?:\s*(?:[-,]|y|al|a)\s*\d{1,2})*\s+de\s+(" + "|".join(MONTHS) + r")(?:\s+de\s+(\d{4}))?", low):
+        day, month = int(m.group(1)), MONTHS[m.group(2)]
+        year = int(m.group(3)) if m.group(3) else ref.year
+        if not m.group(3) and month < ref.month - 6:
+            year += 1
+        tail = low[m.end():m.end() + 60]
+        tr = re.search(r"(?:de|desde las?|a partir de las?)\s*(\d{1,2})[:.](\d{2})", tail)
+        h, mi = (int(tr.group(1)), int(tr.group(2))) if tr else (0, 0)
+        try:
+            start = dt.datetime(year, month, day, h, mi, tzinfo=MADRID).astimezone(dt.timezone.utc)
+        except ValueError:
+            continue
+        if best is None or start < best:
+            best = start
+    return best
+
+
 def incident_key(inc: dict) -> str:
     return f"{inc['mode']}|{','.join(inc['lines'])}|{inc.get('title') or inc['text'][:80]}"
 
@@ -111,7 +133,7 @@ def still_active(inc: dict, now: dt.datetime) -> bool:
     from_text = expiry(inc["text"], since, now)
     # The source's own field wins; text only fills a missing one, or narrows a date-only one
     # (EMT gives the day in rssAfectaHasta and the hours in the text).
-    if stated and from_text and from_text < stated and from_text.date() == stated.astimezone(MADRID).date():
+    if stated and from_text and from_text < stated and stated - from_text < dt.timedelta(hours=36):
         until = from_text
     else:
         until = stated or from_text
@@ -638,6 +660,12 @@ def main() -> int:
         # but mark them so nothing colours a line or opens an episode before they start.
         for i in incidents:
             since = dt.datetime.fromisoformat(i["since"]) if i.get("since") else None
+            if i.get("source") == "CRTM":
+                # CRTM has no start field; 'since' is when we first saw it. The text often says when it starts.
+                starts = window_start(i["text"], since or now)
+                if starts and (since is None or starts > since):
+                    i["starts"] = starts.isoformat()
+                    since = starts
             if since and since > now:
                 i["upcoming"] = True
     status = {

@@ -52,15 +52,16 @@ def episode_key(inc: dict, label: str) -> tuple:
 
 
 def _rules():
-    """estado.py's still_active, so old history rows are judged by today's expiry rules."""
+    """estado.py's rules, so old history rows are judged by today's logic."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("estado_rules", os.path.join(os.path.dirname(os.path.abspath(__file__)), "estado.py"))
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-    return m.still_active
+    return m.still_active, m.window_start
 
 
 _STILL_ACTIVE = None
+_window_start = None
 
 
 def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
@@ -69,9 +70,9 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
     state: {key: episode dict with started, last_seen, severity, until, ...}
     Returns {"opened": [...], "updated": [...], "closed": [...]} with the episode dicts affected.
     """
-    global _STILL_ACTIVE
+    global _STILL_ACTIVE, _window_start
     if _STILL_ACTIVE is None:
-        _STILL_ACTIVE = _rules()
+        _STILL_ACTIVE, _window_start = _rules()
     seen: dict[tuple, dict] = {}
     for inc in incidents:
         if inc.get("severity") not in SEV_RANK or inc.get("upcoming"):
@@ -79,7 +80,12 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
         inc = dict(inc)
         if not _STILL_ACTIVE(inc, now):     # recomputes until with the current rules
             continue
-        since = parse_ts(inc.get("since"))
+        since = parse_ts(inc.get("starts")) or parse_ts(inc.get("since"))
+        if inc.get("source") == "CRTM" and not inc.get("starts"):
+            st = _window_start(inc.get("text") or "", since or now)
+            if st and (since is None or st > since):
+                since = st
+                inc["starts"] = st.isoformat()
         if since and since > now:
             continue      # announced for later (rows written before the upcoming flag existed)
         if inc.get("source") == "EMT" and NOT_DISRUPTION.search(inc.get("title") or ""):
@@ -113,8 +119,8 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
     for key, inc in seen.items():
         ep = state.get(key)
         if ep is None:
-            since = parse_ts(inc.get("since"))
-            started = since if since and since <= now else now   # the notice's own stamp when it has one
+            since = parse_ts(inc.get("starts")) or parse_ts(inc.get("since"))
+            started = since if since and since <= now else now   # when it came into force, when we know
             ep = {
                 "line": key[0], "mode": inc["mode"],
                 "severity": inc["severity"].capitalize(),

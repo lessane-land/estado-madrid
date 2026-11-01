@@ -113,6 +113,14 @@ class Expiry(unittest.TestCase):
         self.m.still_active(inc, self.now)
         self.assertEqual(inc["until"], "2026-11-01T13:30:00+00:00")
 
+    def test_window_start_with_hours(self):
+        s = self.m.window_start("El domingo 1 de noviembre de 11:30 a 14:30 horas, por manifestación", self.now)
+        self.assertEqual(s.isoformat(), "2026-11-01T10:30:00+00:00")
+
+    def test_window_start_desde(self):
+        s = self.m.window_start("Desde el 28 de marzo de 2026 y hasta finales de año, quedará interrumpido", self.now)
+        self.assertEqual((s.year, s.month, s.day), (2026, 3, 28))
+
     def test_open_ended(self):
         self.assertIsNone(self.until("Suspensión METRO L10 Cuzco - Nuevos Ministerios"))
 
