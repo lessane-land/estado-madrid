@@ -508,7 +508,7 @@ def for_here(lat: float, lon: float, radius: float, incidents: list[dict], level
     def incidents_for(line: dict) -> list[dict]:
         hits = []
         for inc in incidents:
-            if inc["mode"] != line["mode"]:
+            if inc["mode"] != line["mode"] or inc.get("upcoming"):
                 continue
             labels = {normalise_label(inc["mode"], l) for l in inc["lines"]}
             if normalise_label(line["mode"], line["label"]) not in labels:
@@ -619,6 +619,12 @@ def main() -> int:
     if not args.scenario:
         carry_since(incidents, previous, now)
         incidents = [i for i in incidents if still_active(i, now)]
+        # EMT announces detours days ahead. Keep them (the evening-before warning is the point of the app),
+        # but mark them so nothing colours a line or opens an episode before they start.
+        for i in incidents:
+            since = dt.datetime.fromisoformat(i["since"]) if i.get("since") else None
+            if since and since > now:
+                i["upcoming"] = True
     status = {
         "generated": dt.datetime.now(dt.timezone.utc).isoformat(),
         "levels": crtm["levels"],

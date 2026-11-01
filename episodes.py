@@ -55,7 +55,7 @@ def advance(state: dict, now: dt.datetime, incidents: list[dict]) -> dict:
     """
     seen: dict[tuple, dict] = {}
     for inc in incidents:
-        if inc.get("severity") not in SEV_RANK:
+        if inc.get("severity") not in SEV_RANK or inc.get("upcoming"):
             continue
         for label in inc.get("lines") or []:
             key = episode_key(inc, label)

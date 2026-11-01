@@ -21,12 +21,20 @@ Status of Madrid public transport around a point, with impact per line. Read REA
 - The phone reads `GET /rest/v1/estado?id=eq.1` with the anon key. `graph.json` ships inside the app.
 
 ## Incident contract with the app
-`source`, `mode`, `lines`, `severity`, `title`, `text`, `scope`, `since`, `until`. The app (madrid-hoy, HoyKit)
+`source`, `mode`, `lines`, `severity`, `title`, `text`, `scope`, `since`, `until`, optional `upcoming` (true when
+`since` is in the future: announced, not yet in force; never colours a line, never opens an episode). The app (madrid-hoy, HoyKit)
 decodes these; adding a field is fine, renaming or removing one needs a matching app change.
 `graph-app.json` per line: `s` ordered stops (rail: merged union of every itinerary, both directions and branches, so
 every stop that lists a rail line is in its sequence; buses: the drawn direction plus same-direction branches),
 `lp` loop flag, `sh` Google encoded polyline (precision 5, simplified to 8 m), `shk: "stops"` when the feed's
 shape was unusable and the path is stop-to-stop straight lines. Metro R has no path.
+
+## EMT notices
+MobilityLabs `lines/incidents/{line}` returns an RSS channel; notices are under `item` with `guid`, `title`,
+`description`, `rssAfectaDesde`, `rssAfectaHasta`, `GoogleTransitEffect` (EMT's own codes, e.g. "05 - DESVÍO PROGRAMADO").
+All EMT lines are polled in 12 rotating groups (each line about hourly); notices are merged by `guid` with every line
+named in the text, carried 65 min between polls. Dropped: the channel header, and non-disruption (Refuerzo, Cambio de
+horario, Servicio especial). Severity: rojo only for no service / suspension, else amarillo.
 
 ## Line health
 `line_episodes` (supabase/episodes.sql): one row per line per stretch of trouble, maintained by `episodes.py` from
