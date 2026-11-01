@@ -14,7 +14,9 @@ Status of Madrid public transport around a point, with impact per line. Read REA
   (portal user) are the interim fallback until the MobilityLabs app is approved.
 
 ## Deployment
-- `.github/workflows/estado.yml` polls every 5 minutes and upserts row id=1 of table `estado` in Supabase (secrets `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`; optional `EMT_EMAIL`, `EMT_PASSWORD`).
+- The real clock is Supabase `pg_cron` (`supabase/cron.sql`), which dispatches the workflow every 5 minutes; GitHub's own
+  schedule in the workflow is a backup only (it fired 3 times in 11 hours on day one).
+- `.github/workflows/estado.yml` polls and upserts row id=1 of table `estado` in Supabase (secrets `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`; optional `EMT_EMAIL`, `EMT_PASSWORD`).
 - `.github/workflows/graph.yml` rebuilds `graph.json` monthly and commits it, which also keeps the schedule alive.
 - The phone reads `GET /rest/v1/estado?id=eq.1` with the anon key. `graph.json` ships inside the app.
 

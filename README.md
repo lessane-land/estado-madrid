@@ -63,6 +63,10 @@ Severity: `rojo` when the text says suspendido / interrumpido / cierre / huelga,
 
 with `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` in the environment (or `ESTADO_OUT=/var/www/html/estado.json` if nginx serves it).
 
+**The clock.** GitHub's schedule proved unreliable (three runs in eleven hours on `*/10`). `supabase/cron.sql` makes
+Postgres the clock: `pg_cron` calls GitHub's `workflow_dispatch` every five minutes through `pg_net`, with a
+fine-grained token kept in the Supabase Vault. The GitHub schedule stays on as a backup.
+
 **Supabase only** (no machine at all): run `supabase/schema.sql` once. Then port `estado.py` to an Edge Function in TypeScript (it is three fetches and some regex) and schedule it with `pg_cron` every five minutes. The phone reads `GET /rest/v1/estado?id=eq.1` with the anon key. `graph.json` ships inside the app and is rebuilt monthly on a laptop.
 
 **Vercel**: same idea, Vercel Cron plus a serverless function writing to Vercel KV or straight to Supabase. Hobby functions are limited to 10 s, enough for the poller, not for the graph build.
