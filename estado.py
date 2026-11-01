@@ -306,14 +306,16 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
             out["polled"] += 1
             if str(body.get("code")) not in ("00", "01"):
                 continue
-            items = body.get("data") or []
-            if items and not logged_shape:
-                # Diagnostic, data keys only, never values: the answer shape is not documented anywhere we found.
-                print(f"emt incidents shape for {line}: {sorted((items[0] if isinstance(items[0], dict) else {}).keys())}", file=sys.stderr)
+            items = emt_flatten(body.get("data") or [])
+            if not logged_shape and body.get("data"):
+                # Diagnostic, key names only, never values: the answer shape is not documented anywhere we found.
+                out["shape"] = emt_shape(body.get("data"))
                 logged_shape = True
             for item in items:
                 if not isinstance(item, dict):
                     continue
+                if item.get("item") is not None or item.get("items") is not None:
+                    continue   # a channel wrapper, not a notice
                 title = str(item.get("title") or item.get("name") or item.get("description") or "")[:120]
                 text = str(item.get("description") or item.get("text") or title)
                 since = item.get("dateStart") or item.get("startDate") or item.get("dateIni") or item.get("fechaInicio")
@@ -343,6 +345,41 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
             out["incidents"].append(inc)
             out["carried"] += 1
     return out
+
+
+def emt_flatten(data) -> list[dict]:
+    """The incidents answer is RSS-like: a channel dict with the notices under 'item' (or 'items').
+    Return the notices themselves, whatever the nesting; a bare list of notices passes through."""
+    found: list[dict] = []
+    def walk(node, depth=0):
+        if depth > 4:
+            return
+        if isinstance(node, list):
+            for n in node:
+                walk(n, depth + 1)
+        elif isinstance(node, dict):
+            nested = node.get("item") if node.get("item") is not None else node.get("items")
+            if nested is not None:
+                walk(nested, depth + 1)
+            elif any(k in node for k in ("title", "description", "text", "name")):
+                found.append(node)
+            else:
+                for v in node.values():
+                    if isinstance(v, (list, dict)):
+                        walk(v, depth + 1)
+    walk(data)
+    return found
+
+
+def emt_shape(data, depth=0) -> object:
+    """Key names of an answer, recursively, with no values. For the sources block."""
+    if depth > 3:
+        return "..."
+    if isinstance(data, list):
+        return [emt_shape(data[0], depth + 1)] if data else []
+    if isinstance(data, dict):
+        return {k: emt_shape(v, depth + 1) for k, v in list(data.items())[:12]}
+    return type(data).__name__
 
 
 def _emt_date(value) -> str | None:
