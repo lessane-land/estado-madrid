@@ -30,12 +30,12 @@ def previous_from_supabase() -> Path | None:
     if not (url and key):
         return None
     try:
-        req = urllib.request.Request(f"{url}/rest/v1/estado?id=eq.1&select=incidents",
+        req = urllib.request.Request(f"{url}/rest/v1/estado?id=eq.1&select=incidents,levels",
                                      headers={"apikey": key, "Authorization": f"Bearer {key}"})
         with urllib.request.urlopen(req, timeout=30) as r:
             rows = json.load(r)
         path = Path("previous.json")
-        path.write_text(json.dumps(rows[0]["incidents"] if rows else []), encoding="utf-8")
+        path.write_text(json.dumps(rows[0] if rows else {}), encoding="utf-8")
         return path
     except Exception:  # noqa: BLE001
         return None

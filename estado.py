@@ -259,8 +259,23 @@ def bus_lines_in(body: str, interurban: bool) -> list[str]:
 
 # ---------------------------------------------------------------- EMT MobilityLabs
 
-def emt_incidents(lines: list[str]) -> dict:
-    out = {"source": "openapi.emtmadrid.es", "ok": False, "incidents": []}
+EMT_REFRESH_MINUTES = 65        # a line's incidents are kept this long between polls of that line
+EMT_SLOTS = 12                  # lines are polled in 12 rotating groups: every line about once an hour
+
+
+def emt_line_labels(graph_path: str) -> list[str]:
+    """Every EMT line label (27, C1, N15...) from the graph; the whole network, not a commute."""
+    try:
+        g = json.load(open(graph_path, encoding="utf-8"))
+        return sorted(l["label"] for l in g["lines"] if l["mode"] == "emt")
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> dict:
+    """Per-line incidents from MobilityLabs, polled in rotation. Lines not polled this run keep what the
+    previous row had for them, as long as it is younger than EMT_REFRESH_MINUTES."""
+    out = {"source": "openapi.emtmadrid.es", "ok": False, "polled": 0, "carried": 0, "incidents": []}
     # Registered app (X-ClientId + passKey) wins when present; portal user (email + password) otherwise.
     client_id, pass_key = os.environ.get("EMT_CLIENT_ID"), os.environ.get("EMT_PASS_KEY")
     email, password = os.environ.get("EMT_EMAIL"), os.environ.get("EMT_PASSWORD")
@@ -271,24 +286,76 @@ def emt_incidents(lines: list[str]) -> dict:
     else:
         out["skipped"] = "set EMT_CLIENT_ID and EMT_PASS_KEY (or EMT_EMAIL and EMT_PASSWORD) to include EMT line incidents"
         return out
+    if not lines:
+        out["skipped"] = "no EMT line list (graph.json missing)"
+        return out
+
+    slot = (now.minute // 5) % EMT_SLOTS
+    todo = [l for i, l in enumerate(lines) if i % EMT_SLOTS == slot]
     try:
         req = urllib.request.Request("https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/",
                                      headers={**login_headers, "User-Agent": UA})
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             token = json.load(r)["data"][0]["accessToken"]
-        for line in lines:
+        logged_shape = False
+        for line in todo:
             req = urllib.request.Request(f"https://openapi.emtmadrid.es/v1/transport/busemtmad/lines/incidents/{line}/",
                                          headers={"accessToken": token, "User-Agent": UA})
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 body = json.load(r)
-            for item in body.get("data", []) or []:
-                out["incidents"].append({"source": "EMT", "mode": "emt", "lines": [line], "severity": "amarillo",
-                                         "since": None, "text": json.dumps(item, ensure_ascii=False)[:300], "scope": None})
+            out["polled"] += 1
+            if str(body.get("code")) not in ("00", "01"):
+                continue
+            items = body.get("data") or []
+            if items and not logged_shape:
+                # Diagnostic, data keys only, never values: the answer shape is not documented anywhere we found.
+                print(f"emt incidents shape for {line}: {sorted((items[0] if isinstance(items[0], dict) else {}).keys())}", file=sys.stderr)
+                logged_shape = True
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or item.get("name") or item.get("description") or "")[:120]
+                text = str(item.get("description") or item.get("text") or title)
+                since = item.get("dateStart") or item.get("startDate") or item.get("dateIni") or item.get("fechaInicio")
+                until = item.get("dateEnd") or item.get("endDate") or item.get("dateFin") or item.get("fechaFin")
+                out["incidents"].append({
+                    "source": "EMT", "mode": "emt", "lines": [line],
+                    "severity": "rojo" if re.search(r"suspend|interrump|sin servicio", text, re.I) else "amarillo",
+                    "since": _emt_date(since), "until": _emt_date(until),
+                    "title": title, "text": f"{title}. {text}"[:500] if text != title else title,
+                    "scope": None, "checked": now.isoformat(),
+                })
         out["ok"] = True
     except Exception as e:  # noqa: BLE001
         # Public repo, public logs: never echo the exception verbatim, it may contain request headers.
         out["error"] = f"{type(e).__name__} while talking to EMT"
+        todo = []          # nothing was refreshed; carry everything that is still young
+
+    # Carry the previous row's EMT incidents for lines not refreshed this run.
+    refreshed = set(todo) if out["ok"] else set()
+    for inc in previous:
+        if inc.get("source") != "EMT" or not inc.get("checked"):
+            continue
+        if set(inc.get("lines") or []) & refreshed:
+            continue
+        checked = dt.datetime.fromisoformat(inc["checked"])
+        if now - checked <= dt.timedelta(minutes=EMT_REFRESH_MINUTES):
+            out["incidents"].append(inc)
+            out["carried"] += 1
     return out
+
+
+def _emt_date(value) -> str | None:
+    """EMT dates come in several spellings; keep ISO when we can, else None."""
+    if not value:
+        return None
+    s = str(value).strip()
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return dt.datetime.strptime(s[:19], fmt).replace(tzinfo=dt.timezone.utc).isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 # ---------------------------------------------------------------- Commute matching
@@ -442,6 +509,11 @@ def main() -> int:
     args = ap.parse_args()
 
     commute = json.load(open(args.commute)) if args.commute else None
+    now = dt.datetime.now(dt.timezone.utc)
+    previous_row = json.load(open(args.previous)) if args.previous and os.path.exists(args.previous) else {}
+    if isinstance(previous_row, list):
+        previous_row = {"incidents": previous_row}
+    previous = previous_row.get("incidents", [])
     if args.scenario:
         sc = json.load(open(args.scenario))
         renfe = {"source": "scenario", "ok": True, "incidents": []}
@@ -451,14 +523,14 @@ def main() -> int:
     else:
         renfe = renfe_alerts()
         crtm = crtm_status()
-        emt = emt_incidents(commute.get("emt", []) if commute else [])
+        if not crtm["levels"] and previous_row.get("levels"):
+            # CRTM did not answer: keep the last known lights rather than publishing an empty set.
+            crtm["levels"] = previous_row["levels"]
+            crtm["carried"] = True
+        emt = emt_incidents(emt_line_labels(args.graph), previous, now)
 
-    now = dt.datetime.now(dt.timezone.utc)
     incidents = renfe["incidents"] + crtm["incidents"] + emt["incidents"]
     if not args.scenario:
-        previous = json.load(open(args.previous)) if args.previous and os.path.exists(args.previous) else []
-        if isinstance(previous, dict):
-            previous = previous.get("incidents", [])
         carry_since(incidents, previous, now)
         incidents = [i for i in incidents if still_active(i, now)]
     status = {
