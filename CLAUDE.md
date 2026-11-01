@@ -23,8 +23,10 @@ Status of Madrid public transport around a point, with impact per line. Read REA
 ## Incident contract with the app
 `source`, `mode`, `lines`, `severity`, `title`, `text`, `scope`, `since`, `until`. The app (madrid-hoy, HoyKit)
 decodes these; adding a field is fine, renaming or removing one needs a matching app change.
-`graph-app.json` rail sequences (`s`) are the merged union of every itinerary of the line (both directions,
-all branches), so every stop that lists a rail line appears in that line's sequence.
+`graph-app.json` per line: `s` ordered stops (rail: merged union of every itinerary, both directions and branches, so
+every stop that lists a rail line is in its sequence; buses: the drawn direction plus same-direction branches),
+`lp` loop flag, `sh` Google encoded polyline (precision 5, simplified to 8 m), `shk: "stops"` when the feed's
+shape was unusable and the path is stop-to-stop straight lines. Metro R has no path.
 
 ## State
 31 Oct 2026, evening: expiry and recovery filtering, bus lines from CRTM bodies, since carried across runs, rail-only spill,

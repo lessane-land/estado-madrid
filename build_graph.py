@@ -74,6 +74,57 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def simplify(points: list[list[float]], tolerance_m: float = 8.0) -> list[list[float]]:
+    """Douglas-Peucker on [lat, lon] points, tolerance in metres (local flat projection)."""
+    if len(points) <= 2:
+        return points
+    lat0 = math.radians(points[0][0])
+    kx = 111_320.0 * math.cos(lat0)
+    ky = 110_540.0
+    xy = [(p[1] * kx, p[0] * ky) for p in points]
+
+    def dist(p, a, b):
+        ax, ay = a; bx, by = b; px, py = p
+        dx, dy = bx - ax, by - ay
+        if dx == 0 and dy == 0:
+            return math.hypot(px - ax, py - ay)
+        u = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+        return math.hypot(px - (ax + u * dx), py - (ay + u * dy))
+
+    keep = [False] * len(points)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(points) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        best, bi = 0.0, -1
+        for k in range(i + 1, j):
+            d = dist(xy[k], xy[i], xy[j])
+            if d > best:
+                best, bi = d, k
+        if best > tolerance_m:
+            keep[bi] = True
+            stack.append((i, bi))
+            stack.append((bi, j))
+    return [p for p, k in zip(points, keep) if k]
+
+
+def cut_at_first_repeat(stops: list[str]) -> list[str]:
+    """Some feeds store a trip as the same route run many times in a row. Keep one run: stop at the
+    first stop seen twice, including it only when it closes a loop back to the first stop."""
+    seen = set()
+    out = []
+    for s in stops:
+        if s in seen:
+            if s == stops[0]:
+                out.append(s)
+            break
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def import_feed(mode: str, path: Path, graph: dict) -> None:
     t0 = time.time()
     z = zipfile.ZipFile(path)
@@ -83,7 +134,7 @@ def import_feed(mode: str, path: Path, graph: dict) -> None:
     for r in rows(z, "routes.txt"):
         label = r.get("route_short_name") or r.get("route_id")
         # Town buses reuse "1", "2" in every municipality: key them by route id (…__013_ is the town).
-        town = re.search(r"__(\d{3})_?$", r["route_id"]) if mode == "urbanos" else None
+        town = re.search(r"_(\d{3})_?$", r["route_id"]) if mode == "urbanos" else None
         line_id = f"{mode}:{label}:{town.group(1)}" if town else f"{mode}:{label}"
         route_to_line[r["route_id"]] = line_id
         line = graph["lines"].setdefault(line_id, {
@@ -117,8 +168,11 @@ def import_feed(mode: str, path: Path, graph: dict) -> None:
 
     # Trips: one representative per (route, direction) = the trip with the most stops.
     trip_route: dict[str, tuple[str, str]] = {}
+    trip_shape: dict[str, str] = {}
     for t in rows(z, "trips.txt"):
         trip_route[t["trip_id"]] = (t["route_id"], t.get("direction_id") or "0")
+        if t.get("shape_id"):
+            trip_shape[t["trip_id"]] = t["shape_id"]
 
     counts: dict[str, int] = defaultdict(int)
     for st in rows(z, "stop_times.txt"):
@@ -138,15 +192,30 @@ def import_feed(mode: str, path: Path, graph: dict) -> None:
         if st["trip_id"] in chosen:
             seqs[st["trip_id"]].append((int(st["stop_sequence"]), f"{mode}:{st['stop_id']}"))
 
+    # Shapes: only the ones the chosen trips use (interurbanos' shapes.txt is 200 MB, so stream once).
+    wanted = {trip_shape[t] for t in chosen if t in trip_shape}
+    raw_shapes: dict[str, list[tuple[int, float, float]]] = defaultdict(list)
+    if wanted:
+        for sp in rows(z, "shapes.txt"):
+            if sp["shape_id"] in wanted:
+                try:
+                    raw_shapes[sp["shape_id"]].append((int(sp["shape_pt_sequence"]), float(sp["shape_pt_lat"]), float(sp["shape_pt_lon"])))
+                except ValueError:
+                    pass
+    shapes = {sid: simplify([[round(la, 5), round(lo, 5)] for _, la, lo in sorted(pts)]) for sid, pts in raw_shapes.items()}
+
     for trip_id, (route_id, direction) in chosen.items():
         line_id = route_to_line.get(route_id)
         if not line_id:
             continue
-        ordered = [sid for _, sid in sorted(seqs[trip_id]) if sid in stop_ids]
+        ordered = cut_at_first_repeat([sid for _, sid in sorted(seqs[trip_id]) if sid in stop_ids])
         if len(ordered) < 2:
             continue
         # Cercanías encodes direction as separate routes; key sequences by route+direction to keep both.
-        graph["lines"][line_id]["sequences"][f"{route_id}/{direction}"] = ordered
+        key = f"{route_id}/{direction}"
+        graph["lines"][line_id]["sequences"][key] = ordered
+        if trip_id in trip_shape and trip_shape[trip_id] in shapes:
+            graph["lines"][line_id].setdefault("shapes", {})[key] = shapes[trip_shape[trip_id]]
         for sid in ordered:
             lines = graph["stops"][sid]["lines"]
             if line_id not in lines:
@@ -182,7 +251,7 @@ def import_metro_gis(graph: dict) -> None:
     stations = fetch_json(f"{METRO_GIS}/0/query?where=1%3D1&outFields=CODIGOESTACION,DENOMINACION,LINEAS"
                           f"&returnGeometry=true&outSR=4326&f=geojson&resultRecordCount=2000")
     tramos = fetch_json(f"{METRO_GIS}/4/query?where=1%3D1&outFields=NUMEROLINEAUSUARIO,SENTIDO,NUMEROORDEN,"
-                        f"CODIGOESTACION,CODIGOITINERARIO&returnGeometry=false&f=json&resultRecordCount=5000")
+                        f"CODIGOESTACION,CODIGOITINERARIO&returnGeometry=true&outSR=4326&f=geojson&resultRecordCount=5000")
     colours = {"1": "2DBEF0", "2": "ED1C24", "3": "FFD000", "4": "B65518", "5": "8FD400", "6": "98989B",
                "7": "FF8300", "8": "F373B7", "9": "A60084", "10": "003DA5", "11": "009A3E", "12": "A49800", "R": "FFFFFF"}
     # One stop per station (several platform rows share a code; keep the first geometry).
@@ -196,11 +265,19 @@ def import_metro_gis(graph: dict) -> None:
         graph["stops"][sid] = {"id": sid, "mode": mode, "code": code, "name": (p.get("DENOMINACION") or "").strip(),
                                "lat": round(lat, 5), "lon": round(lon, 5), "station": sid, "lines": []}
     seqs: dict[tuple[str, str, int], list[tuple[int, str]]] = defaultdict(list)
+    paths: dict[tuple[str, str, int], list[tuple[int, list]]] = defaultdict(list)
     for f in tramos["features"]:
-        a = f["attributes"]
+        a = f["properties"]
         raw = str(a["NUMEROLINEAUSUARIO"])
         number = re.match(r"\d+|R", raw).group(0)
-        seqs[(number, raw, int(a["SENTIDO"]))].append((int(a["NUMEROORDEN"]), f"{mode}:{a['CODIGOESTACION']}"))
+        key = (number, raw, int(a["SENTIDO"]))
+        seqs[key].append((int(a["NUMEROORDEN"]), f"{mode}:{a['CODIGOESTACION']}"))
+        geom = f.get("geometry") or {}
+        coords = geom.get("coordinates") or []
+        if geom.get("type") == "MultiLineString":
+            coords = [c for part in coords for c in part]
+        if coords:
+            paths[key].append((int(a["NUMEROORDEN"]), [[round(lat, 5), round(lon, 5)] for lon, lat in coords]))
     for (number, raw, sentido), items in seqs.items():
         line_id = f"{mode}:L{number}"
         line = graph["lines"].setdefault(line_id, {"id": line_id, "mode": mode, "label": f"L{number}", "name": "",
@@ -209,6 +286,9 @@ def import_metro_gis(graph: dict) -> None:
         if len(ordered) < 2:
             continue
         line["sequences"][f"{raw}/{sentido}"] = ordered
+        pts = [p for _, seg in sorted(paths.get((number, raw, sentido), [])) for p in seg]
+        if pts:
+            line.setdefault("shapes", {})[f"{raw}/{sentido}"] = simplify(pts)
         if not line["name"]:
             line["name"] = f"{graph['stops'][ordered[0]]['name']} - {graph['stops'][ordered[-1]]['name']}"
         for sid in ordered:
