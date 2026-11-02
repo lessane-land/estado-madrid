@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 
 UA = "estado-madrid-prototype/0.1 (personal project)"
@@ -341,6 +342,9 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
             try:
                 with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                     body = json.load(r)
+            except urllib.error.HTTPError as e:
+                out.setdefault("login", []).append(f"{kind}: HTTP {e.code}")   # status only, never the body
+                continue
             except Exception as e:  # noqa: BLE001
                 out.setdefault("login", []).append(f"{kind}: {type(e).__name__}")
                 continue
