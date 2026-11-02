@@ -1,10 +1,12 @@
 // vivo: live vehicles for the Madrid se mueve map.
 //   GET ?what=trains             Cercanías trains in the Madrid area (Renfe GTFS-RT, cached 15 s)
 //   GET ?what=buses&stops=1,2,3  EMT buses approaching up to 8 stops (MobilityLabs arrivals, cached 25 s per stop)
-//   GET ?city=bay&what=vehicles  every bus, train, tram and ferry in the SF Bay Area (511 regional GTFS-RT, cached 90 s)
-//   GET ?city=bay&what=alerts    service alerts for the whole Bay Area (511, cached 5 min)
-// The 511 token is the secret 511_TOKEN. Its default quota is 60 calls an hour, so 511 is called at most
-// every 90 s for vehicles and every 5 min for alerts (52 an hour), and after a refusal we wait 10 min.
+//   GET ?city=bay&what=vehicles  every bus, train, tram and ferry in the SF Bay Area (511 regional GTFS-RT),
+//                                plus BART trips with their next arrivals ("bart"), since BART sends no positions
+//   GET ?city=bay&what=alerts    service alerts for the whole Bay Area (511)
+//   GET ?city=bay&what=roads     road closures and lane closures (511 WZDx) and express lane and bridge tolls
+// The 511 token is the secret 511_TOKEN. Its default quota is 60 calls an hour; the refresh times in BAY_EVERY
+// spend about 50 (vehicles 20, BART 20, alerts 6, roads 2, tolls 2). After a refusal we wait 10 min.
 // EMT credentials come from the function's secrets: EMT_CLIENT_ID + EMT_PASS_KEY first, EMT_EMAIL + EMT_PASSWORD as fallback.
 // Never echo a secret, a token or a request header in a response or a log.
 
@@ -37,23 +39,39 @@ type Bus = { bus: string; line: string; dest: string; lat: number; lon: number; 
 
 // ---- SF Bay Area (511) ----
 const BAY = "https://api.511.org/transit/";
-const bay = { vehicles: { at: 0, data: [] as unknown[] }, alerts: { at: 0, data: [] as unknown[] }, pauseUntil: 0 };
+const BAY_EVERY = { vehicles: 180_000, bart: 180_000, alerts: 600_000, roads: 1_800_000, tolls: 1_800_000 };
+type Cache = { at: number; data: unknown[] };
+const empty = (): Cache => ({ at: 0, data: [] });
+const bay = { vehicles: empty(), bart: empty(), alerts: empty(), roads: empty(), tolls: empty(), pauseUntil: 0 };
 const FeedMessage = GtfsRealtimeBindings.transit_realtime.FeedMessage;
 const text = (t: any) => (t?.translation ?? []).find((x: any) => !x.language || x.language.startsWith("en"))?.text ?? t?.translation?.[0]?.text ?? "";
 
-async function feed511(path: string) {
+async function get511(url: string) {
   const key = Deno.env.get("511_TOKEN")?.trim();
   if (!key) throw new Error("no511");
   if (Date.now() < bay.pauseUntil) throw new Error("busy");
-  const r = await fetch(`${BAY}${path}?agency=RG&api_key=${encodeURIComponent(key)}`);
+  const r = await fetch(`${url}&api_key=${encodeURIComponent(key)}`);
   if (r.status === 429 || r.status === 401 || r.status === 403) { bay.pauseUntil = Date.now() + 600_000; throw new Error("busy"); }
   if (!r.ok) throw new Error(`bay${r.status}`);
+  return r;
+}
+async function feed511(path: string, agency = "RG") {
+  const r = await get511(`${BAY}${path}?agency=${agency}`);
   return FeedMessage.decode(new Uint8Array(await r.arrayBuffer()));
+}
+async function json511(path: string) {
+  const r = await get511(`https://api.511.org/${path}?format=json`);
+  return JSON.parse((await r.text()).replace(/^\uFEFF/, ""));
+}
+// Refresh one cache when it is due; on failure keep serving the last good copy.
+async function due(c: Cache, every: number, load: () => Promise<unknown[]>) {
+  if (Date.now() - c.at < every) return c;
+  try { c.data = await load(); c.at = Date.now(); } catch (e) { if (!c.at) throw e; }
+  return c;
 }
 
 async function bayVehicles() {
-  if (Date.now() - bay.vehicles.at < 90_000) return bay.vehicles;
-  try {
+  return due(bay.vehicles, BAY_EVERY.vehicles, async () => {
     const m = await feed511("VehiclePositions");
     const out = [];
     for (const e of m.entity ?? []) {
@@ -61,16 +79,76 @@ async function bayVehicles() {
       if (!p) continue;
       out.push({ id: String(v.vehicle?.id ?? e.id), a: String(v.vehicle?.agencyId ?? (e.id.includes(":") ? e.id.split(":")[0] : "")), r: String(v.trip?.routeId ?? ""),
         d: v.trip?.directionId ?? null, lat: +p.latitude.toFixed(5), lon: +p.longitude.toFixed(5), b: p.bearing ?? null, s: String(v.stopId ?? ""),
-        st: v.currentStatus ?? null, t: Number(v.timestamp ?? 0), eid: String(e.id) });
+        st: v.currentStatus ?? null, t: Number(v.timestamp ?? 0) });
     }
-    bay.vehicles = { at: Date.now(), data: out };
-  } catch (e) { if (!bay.vehicles.at) throw e; }
-  return bay.vehicles;
+    return out;
+  });
+}
+
+// BART: trips with their next three arrivals. The page places each train between stations from these times.
+async function bayBart() {
+  return due(bay.bart, BAY_EVERY.bart, async () => {
+    const m = await feed511("TripUpdates", "BA");
+    const out = [];
+    for (const e of m.entity ?? []) {
+      const t: any = e.tripUpdate;
+      if (!t?.trip) continue;
+      const u = (t.stopTimeUpdate ?? []).slice(0, 3).map((x: any) => [String(x.stopId ?? ""), Number(x.arrival?.time ?? x.departure?.time ?? 0), Number(x.departure?.time ?? x.arrival?.time ?? 0)]);
+      if (!u.length) continue;
+      out.push({ id: String(t.trip.tripId ?? e.id), r: "BA:" + String(t.trip.routeId ?? ""), car: String(t.vehicle?.id ?? ""), u });
+    }
+    return out;
+  });
+}
+
+const latlon = (c: number[]) => [+c[1].toFixed(5), +c[0].toFixed(5)];
+// Road closures: only what is happening now and closes at least some lanes, as short paths.
+async function bayRoads() {
+  return due(bay.roads, BAY_EVERY.roads, async () => {
+    const d = await json511("traffic/wzdx");
+    const now = Date.now(), out = [];
+    for (const f of d.features ?? []) {
+      const p = f.properties ?? {}, core = p.core_details ?? {};
+      const impact = String(p.vehicle_impact ?? "");
+      const kind = impact === "all-lanes-closed" ? "closed" : impact.startsWith("some-lanes-closed") ? "lanes" : core.event_type === "detour" ? "detour" : "";
+      if (!kind) continue;
+      if (p.event_status && p.event_status !== "active") continue;
+      if (p.start_date && Date.parse(p.start_date) > now) continue;
+      if (p.end_date && Date.parse(p.end_date) < now) continue;
+      const g = f.geometry ?? {}, coords = g.type === "LineString" ? g.coordinates : g.type === "MultiPoint" ? g.coordinates : [];
+      if (!coords?.length) continue;
+      const step = Math.max(1, Math.ceil(coords.length / 24));
+      const path = coords.filter((_: unknown, i: number) => i % step === 0 || i === coords.length - 1).map(latlon);
+      out.push({ id: String(f.id), kind, road: (core.road_names ?? []).join(" / "), dir: core.direction ?? "", text: String(core.description ?? "").slice(0, 200),
+        from: p.beginning_cross_street ?? "", to: p.ending_cross_street ?? "", until: p.end_date ?? null, path });
+    }
+    return out;
+  });
+}
+
+// Tolls: every express lane sign and bridge with its current price to each destination.
+async function bayTolls() {
+  return due(bay.tolls, BAY_EVERY.tolls, async () => {
+    const d = await json511("toll/programs");
+    const out = [];
+    for (const p of d["toll-programs"] ?? []) {
+      const program = p["toll-authority-info"]?.["toll-program-name"] ?? "";
+      for (const s of p["toll-signs"] ?? []) {
+        const c = s.geography?.coordinates;
+        if (!Array.isArray(c)) continue;
+        const to = (s["toll-destinations"] ?? []).map((x: any) => ({ name: String(x.name ?? ""), price: Number(x["toll-rates"]?.[0]?.["toll-price"] ?? NaN) }))
+          .filter((x: any) => Number.isFinite(x.price));
+        if (!to.length) continue;
+        const [lat, lon] = latlon(c);
+        out.push({ id: String(s.id), program, name: String(s.name ?? ""), lat, lon, to: to.slice(0, 4) });
+      }
+    }
+    return out;
+  });
 }
 
 async function bayAlerts() {
-  if (Date.now() - bay.alerts.at < 300_000) return bay.alerts;
-  try {
+  return due(bay.alerts, BAY_EVERY.alerts, async () => {
     const m = await feed511("servicealerts");
     const out = [];
     for (const e of m.entity ?? []) {
@@ -80,9 +158,8 @@ async function bayAlerts() {
         on: (a.informedEntity ?? []).map((x: any) => ({ a: x.agencyId ?? "", r: x.routeId ?? "", s: x.stopId ?? "" })).slice(0, 40),
         from: Number(a.activePeriod?.[0]?.start ?? 0), until: Number(a.activePeriod?.[0]?.end ?? 0) });
     }
-    bay.alerts = { at: Date.now(), data: out };
-  } catch (e) { if (!bay.alerts.at) throw e; }
-  return bay.alerts;
+    return out;
+  });
 }
 
 async function getTrains() {
@@ -167,9 +244,20 @@ Deno.serve(async (req) => {
   const what = url.searchParams.get("what");
   try {
     if (url.searchParams.get("city") === "bay") {
-      if (what === "vehicles") { const v = await bayVehicles(); return json({ at: v.at, vehicles: v.data }, 200, 30); }
+      if (what === "vehicles") {
+        const v = await bayVehicles();
+        let b: Cache = bay.bart; try { b = await bayBart(); } catch { /* vehicles still go out */ }
+        return json({ at: v.at, vehicles: v.data, bartAt: b.at, bart: b.data }, 200, 30);
+      }
       if (what === "alerts") { const a = await bayAlerts(); return json({ at: a.at, alerts: a.data }, 200, 60); }
-      return json({ error: "what must be vehicles or alerts" }, 400);
+      if (what === "roads") {
+        let r: Cache = bay.roads, t: Cache = bay.tolls;
+        try { r = await bayRoads(); } catch { /* tolls may still work */ }
+        try { t = await bayTolls(); } catch { /* roads may still work */ }
+        if (!r.at && !t.at) throw new Error("bay");
+        return json({ at: Math.max(r.at, t.at), roads: r.data, tolls: t.data }, 200, 300);
+      }
+      return json({ error: "what must be vehicles, alerts or roads" }, 400);
     }
     if (what === "trains") return json({ at: Date.now(), trains: await getTrains() }, 200, 10);
     if (what === "buses") {

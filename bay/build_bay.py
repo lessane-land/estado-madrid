@@ -8,6 +8,7 @@ Reads 511's regional GTFS (every operator in one zip) and writes graph-bay.json:
   lines  rail, tram, cable car and ferry routes with their stops in order and their path:
          {i, a, m, b, n, c, s, sh, shk?}   (same keys as graph-app.json, plus "a" agency)
   routes every bus route, for labelling live buses: {i, a, b, n, c}
+  alias  platform or child stop id -> station id, for live feeds that name platforms
 Route ids are 511's own, so they match "r" (and "a") in the vivo?city=bay vehicles feed.
 
 Usage:
@@ -173,7 +174,11 @@ def build(z: zipfile.ZipFile) -> dict:
         modes = sorted({rail[r]["m"] for r in ls})
         stops.append({"i": sid, "m": modes[0], "n": s["stop_name"].strip(), "la": round(float(s["stop_lat"]), 5),
                       "lo": round(float(s["stop_lon"]), 5), "l": sorted(set(ls))})
-    return {"built": date.today().isoformat(), "agencies": agencies, "stops": stops, "lines": lines, "routes": buses}
+    # Live feeds name platforms (BART "901801"); the graph keeps stations. alias: platform id -> station id.
+    kept = {x["i"] for x in stops}
+    alias = {sid: s["parent_station"] for sid, s in stops_raw.items()
+             if s.get("parent_station") in kept and sid != s["parent_station"]}
+    return {"built": date.today().isoformat(), "agencies": agencies, "stops": stops, "lines": lines, "routes": buses, "alias": alias}
 
 
 def main() -> int:
