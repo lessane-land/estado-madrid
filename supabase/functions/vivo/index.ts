@@ -42,12 +42,12 @@ const FeedMessage = GtfsRealtimeBindings.transit_realtime.FeedMessage;
 const text = (t: any) => (t?.translation ?? []).find((x: any) => !x.language || x.language.startsWith("en"))?.text ?? t?.translation?.[0]?.text ?? "";
 
 async function feed511(path: string) {
-  const key = Deno.env.get("511_TOKEN");
+  const key = Deno.env.get("511_TOKEN")?.trim();
   if (!key) throw new Error("no511");
   if (Date.now() < bay.pauseUntil) throw new Error("busy");
   const r = await fetch(`${BAY}${path}&agency=RG&api_key=${encodeURIComponent(key)}`);
   if (r.status === 429 || r.status === 401 || r.status === 403) { bay.pauseUntil = Date.now() + 600_000; throw new Error("busy"); }
-  if (!r.ok) throw new Error("bay");
+  if (!r.ok) throw new Error(`bay${r.status}`);
   return FeedMessage.decode(new Uint8Array(await r.arrayBuffer()));
 }
 
@@ -186,7 +186,8 @@ Deno.serve(async (req) => {
     }
     return json({ error: "what must be trains or buses" }, 400);
   } catch (e) {
-    const kind = e instanceof Error && ["renfe", "login", "busy", "bay", "no511"].includes(e.message) ? e.message : "upstream";
+    const m = e instanceof Error ? e.message : "";
+    const kind = ["renfe", "login", "busy", "no511"].includes(m) || /^bay\d{3}$/.test(m) ? m : "upstream";
     return json({ error: kind }, 502, 5);
   }
 });

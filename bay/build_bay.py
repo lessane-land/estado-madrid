@@ -181,7 +181,7 @@ def main() -> int:
     if len(sys.argv) > 2:
         z = zipfile.ZipFile(sys.argv[2])
     else:
-        key = os.environ.get("SF511_TOKEN")
+        key = (os.environ.get("SF511_TOKEN") or "").strip()
         if not key:
             print("SF511_TOKEN is not set", file=sys.stderr)
             return 1
@@ -190,7 +190,7 @@ def main() -> int:
             with urllib.request.urlopen(url, timeout=300) as r:
                 z = zipfile.ZipFile(io.BytesIO(r.read()))
         except Exception as e:  # never echo the URL, it carries the token
-            print(f"511 download failed: {type(e).__name__}", file=sys.stderr)
+            print(f"511 download failed: {type(e).__name__} {getattr(e, 'code', '')}", file=sys.stderr)
             return 1
     out = build(z)
     with open(dst, "w", encoding="utf-8") as f:
