@@ -8,7 +8,7 @@
 // The 511 token is the secret 511_TOKEN. Its default quota is 60 calls an hour; the refresh times in BAY_EVERY
 // spend about 50 (vehicles 20, BART 20, alerts 6, roads 2, tolls 2). After a refusal we wait 10 min.
 //   GET ?what=planes&city=madrid|bay   aircraft within about 110 km (adsb.fi, adsb.lol as fallback; no key; cached 10 s)
-//   GET ?city=bay&what=ships     vessels in the Bay (aisstream.io, secret AISSTREAM_KEY; a 6 s listen, cached 60 s)
+//   GET ?city=bay&what=ships     vessels in the Bay (aisstream.io, secret AISSTREAM_KEY; a 15 s listen, cached 60 s)
 // EMT credentials come from the function's secrets: EMT_CLIENT_ID + EMT_PASS_KEY first, EMT_EMAIL + EMT_PASSWORD as fallback.
 // Never echo a secret, a token or a request header in a response or a log.
 
@@ -201,11 +201,11 @@ async function getShips() {
       try { ws.close(); } catch { /* closed */ }
       const prev = new Map((ships.data as any[]).map((x) => [x.id, x]));
       const out = [...seen.values()].map((x) => ({ ...x, ...(names.get(x.id) ?? (prev.get(x.id) ? { name: prev.get(x.id).name, to: prev.get(x.id).to, type: prev.get(x.id).type } : {})) }));
-      // Keep ships heard in the last 10 minutes so quiet ones do not blink out between listens.
-      for (const [id, x] of prev) if (!seen.has(id) && Date.now() - (x.at ?? 0) < 600_000) out.push(x);
+      // Keep ships heard in the last 30 minutes so quiet ones do not blink out between listens.
+      for (const [id, x] of prev) if (!seen.has(id) && Date.now() - (x.at ?? 0) < 1_800_000) out.push(x);
       resolve(out);
     };
-    const timer = setTimeout(done, 6000);
+    const timer = setTimeout(done, 15000);
     ws.onopen = () => ws.send(JSON.stringify({ APIKey: key, BoundingBoxes: [SHIP_BOX], FilterMessageTypes: ["PositionReport", "ShipStaticData", "StandardClassBPositionReport"] }));
     ws.onerror = () => { clearTimeout(timer); if (seen.size) done(); else reject(new Error("ships")); };
     ws.onmessage = async (ev) => {
