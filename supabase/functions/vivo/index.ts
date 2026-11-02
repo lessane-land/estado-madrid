@@ -1,8 +1,14 @@
 // vivo: live vehicles for the Madrid se mueve map.
 //   GET ?what=trains             Cercanías trains in the Madrid area (Renfe GTFS-RT, cached 15 s)
 //   GET ?what=buses&stops=1,2,3  EMT buses approaching up to 8 stops (MobilityLabs arrivals, cached 25 s per stop)
+//   GET ?city=bay&what=vehicles  every bus, train, tram and ferry in the SF Bay Area (511 regional GTFS-RT, cached 90 s)
+//   GET ?city=bay&what=alerts    service alerts for the whole Bay Area (511, cached 5 min)
+// The 511 token is the secret 511_TOKEN. Its default quota is 60 calls an hour, so 511 is called at most
+// every 90 s for vehicles and every 5 min for alerts (52 an hour), and after a refusal we wait 10 min.
 // EMT credentials come from the function's secrets: EMT_CLIENT_ID + EMT_PASS_KEY first, EMT_EMAIL + EMT_PASSWORD as fallback.
 // Never echo a secret, a token or a request header in a response or a log.
+
+import GtfsRealtimeBindings from "npm:gtfs-realtime-bindings@1.1.1";
 
 const RENFE = "https://gtfsrt.renfe.com/vehicle_positions.json";
 const EMT = "https://openapi.emtmadrid.es/";
@@ -28,6 +34,56 @@ const stopCache = new Map<string, { at: number; buses: Bus[] }>();
 let window: { start: number; calls: number } = { start: 0, calls: 0 };
 
 type Bus = { bus: string; line: string; dest: string; lat: number; lon: number; stop: string; secs: number | null; meters: number | null };
+
+// ---- SF Bay Area (511) ----
+const BAY = "https://api.511.org/transit/";
+const bay = { vehicles: { at: 0, data: [] as unknown[] }, alerts: { at: 0, data: [] as unknown[] }, pauseUntil: 0 };
+const FeedMessage = GtfsRealtimeBindings.transit_realtime.FeedMessage;
+const text = (t: any) => (t?.translation ?? []).find((x: any) => !x.language || x.language.startsWith("en"))?.text ?? t?.translation?.[0]?.text ?? "";
+
+async function feed511(path: string) {
+  const key = Deno.env.get("511_TOKEN");
+  if (!key) throw new Error("no511");
+  if (Date.now() < bay.pauseUntil) throw new Error("busy");
+  const r = await fetch(`${BAY}${path}&agency=RG&api_key=${encodeURIComponent(key)}`);
+  if (r.status === 429 || r.status === 401 || r.status === 403) { bay.pauseUntil = Date.now() + 600_000; throw new Error("busy"); }
+  if (!r.ok) throw new Error("bay");
+  return FeedMessage.decode(new Uint8Array(await r.arrayBuffer()));
+}
+
+async function bayVehicles() {
+  if (Date.now() - bay.vehicles.at < 90_000) return bay.vehicles;
+  try {
+    const m = await feed511("VehiclePositions?");
+    const out = [];
+    for (const e of m.entity ?? []) {
+      const v: any = e.vehicle, p = v?.position;
+      if (!p) continue;
+      out.push({ id: String(v.vehicle?.id ?? e.id), a: String(v.vehicle?.agencyId ?? (e.id.includes(":") ? e.id.split(":")[0] : "")), r: String(v.trip?.routeId ?? ""),
+        d: v.trip?.directionId ?? null, lat: +p.latitude.toFixed(5), lon: +p.longitude.toFixed(5), b: p.bearing ?? null, s: String(v.stopId ?? ""),
+        st: v.currentStatus ?? null, t: Number(v.timestamp ?? 0), eid: String(e.id) });
+    }
+    bay.vehicles = { at: Date.now(), data: out };
+  } catch (e) { if (!bay.vehicles.at) throw e; }
+  return bay.vehicles;
+}
+
+async function bayAlerts() {
+  if (Date.now() - bay.alerts.at < 300_000) return bay.alerts;
+  try {
+    const m = await feed511("servicealerts?");
+    const out = [];
+    for (const e of m.entity ?? []) {
+      const a: any = e.alert;
+      if (!a) continue;
+      out.push({ id: String(e.id), effect: a.effect ?? null, title: text(a.headerText), text: text(a.descriptionText).slice(0, 600),
+        on: (a.informedEntity ?? []).map((x: any) => ({ a: x.agencyId ?? "", r: x.routeId ?? "", s: x.stopId ?? "" })).slice(0, 40),
+        from: Number(a.activePeriod?.[0]?.start ?? 0), until: Number(a.activePeriod?.[0]?.end ?? 0) });
+    }
+    bay.alerts = { at: Date.now(), data: out };
+  } catch (e) { if (!bay.alerts.at) throw e; }
+  return bay.alerts;
+}
 
 async function getTrains() {
   if (Date.now() - trains.at < 15_000) return trains.data;
@@ -110,6 +166,11 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const what = url.searchParams.get("what");
   try {
+    if (url.searchParams.get("city") === "bay") {
+      if (what === "vehicles") { const v = await bayVehicles(); return json({ at: v.at, vehicles: v.data }, 200, 30); }
+      if (what === "alerts") { const a = await bayAlerts(); return json({ at: a.at, alerts: a.data }, 200, 60); }
+      return json({ error: "what must be vehicles or alerts" }, 400);
+    }
     if (what === "trains") return json({ at: Date.now(), trains: await getTrains() }, 200, 10);
     if (what === "buses") {
       const stops = (url.searchParams.get("stops") ?? "").split(",").filter((s) => /^\d{1,5}$/.test(s)).slice(0, MAX_STOPS);
@@ -125,7 +186,7 @@ Deno.serve(async (req) => {
     }
     return json({ error: "what must be trains or buses" }, 400);
   } catch (e) {
-    const kind = e instanceof Error && ["renfe", "login", "busy"].includes(e.message) ? e.message : "upstream";
+    const kind = e instanceof Error && ["renfe", "login", "busy", "bay", "no511"].includes(e.message) ? e.message : "upstream";
     return json({ error: kind }, 502, 5);
   }
 });
