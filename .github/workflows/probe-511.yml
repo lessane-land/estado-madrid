@@ -24,20 +24,20 @@ jobs:
                       return r.status, r.read()
               except Exception as e:
                   return getattr(e, "code", type(e).__name__), b""
-          st, b = get("transit/TripUpdates?agency=BA")
-          print("TripUpdates BA", st, len(b))
-          if b:
-              m = gtfs_realtime_pb2.FeedMessage(); m.ParseFromString(b)
-              print("header ts", m.header.timestamp, "entities", len(m.entity))
-              for e in m.entity[:3]:
-                  t = e.trip_update
-                  print("trip", t.trip.trip_id, "route", t.trip.route_id, "dir", t.trip.direction_id, "vehicle", t.vehicle.id, "n stu", len(t.stop_time_update))
-                  for u in t.stop_time_update[:4]:
-                      print("   stop", u.stop_id, "seq", u.stop_sequence, "arr", u.arrival.time, "delay", u.arrival.delay, "dep", u.departure.time)
+          st, b = get("toll/programs?format=json")
+          d = json.loads(b.decode("utf-8-sig"))
+          progs = d["toll-programs"]; print("programs", len(progs))
+          p0 = next(p for p in progs if p.get("toll-signs"))
+          print("PROGRAM", json.dumps({k: v for k, v in p0.items() if k != "toll-signs"})[:900])
+          print("SIGN", json.dumps(p0["toll-signs"][0])[:1500])
+          print("NAMES", [p["toll-authority-info"]["toll-program-name"] for p in progs][:40])
           time.sleep(2)
-          for path in ["traffic/events?format=json", "toll/programs?format=json", "toll/expresslanes?format=json", "traffic/wzdx?format=json"]:
-              st, b = get(path + ("" if "?" in path else "?"))
-              txt = b.decode("utf-8-sig", "replace")
-              print(path, st, len(b), txt[:500].replace("\n", " "))
-              time.sleep(2)
+          st, b = get("traffic/wzdx?format=json")
+          d = json.loads(b.decode("utf-8-sig"))
+          f = d["features"]; print("features", len(f))
+          import collections
+          print("types", collections.Counter(x["properties"]["core_details"].get("event_type") for x in f))
+          print("impact", collections.Counter(x["properties"].get("vehicle_impact") for x in f))
+          print("geom", collections.Counter(x["geometry"]["type"] for x in f))
+          print("FEATURE", json.dumps(f[0])[:1500])
           PY
