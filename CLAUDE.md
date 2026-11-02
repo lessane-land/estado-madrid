@@ -36,6 +36,12 @@ All EMT lines are polled in 12 rotating groups (each line about hourly); notices
 named in the text, carried 65 min between polls. Dropped: the channel header, and non-disruption (Refuerzo, Cambio de
 horario, Servicio especial). Severity: rojo only for no service / suspension, else amarillo.
 
+## Bay Area (Madrid se mueve, Bay edition)
+- `bay/build_bay.py` builds `graph-bay.json` from 511's regional GTFS (`.github/workflows/bay-graph.yml`, monthly, secret `SF511_TOKEN`):
+  rail, tram, cable car and ferry stations and lines in the graph-app.json shape plus `a` (agency), and `routes` for bus labels.
+- The Edge Function `vivo?city=bay&what=vehicles|alerts` reads 511 GTFS-RT with the Supabase secret `511_TOKEN`.
+  The default 511 quota is 60 calls an hour: vehicles every 90 s, alerts every 5 min, 10 min pause after a refusal.
+
 ## Line health
 `line_episodes` (supabase/episodes.sql): one row per line per stretch of trouble, maintained by `episodes.py` from
 publish.py after every poll; 15 min gap tolerance, `until` closes, 120 days kept, anon SELECT. Backfill: the

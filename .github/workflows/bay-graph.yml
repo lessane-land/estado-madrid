@@ -1,0 +1,31 @@
+name: bay-graph
+
+on:
+  schedule:
+    - cron: "41 4 2 * *"         # second of the month, 04:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build graph-bay.json from the 511 regional GTFS
+        env:
+          SF511_TOKEN: ${{ secrets.SF511_TOKEN }}
+        run: python3 -I bay/build_bay.py graph-bay.json
+      - name: Commit if it changed
+        run: |
+          git config user.name "estado bot"
+          git config user.email "lessane.vanesa@gmail.com"
+          git add graph-bay.json
+          git diff --cached --quiet && echo "graph-bay unchanged" && exit 0
+          git commit -m "Monthly Bay Area graph rebuild from 511"
+          git push
