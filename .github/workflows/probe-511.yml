@@ -1,0 +1,17 @@
+name: probe-511
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Status codes only (the token is never printed)
+        env:
+          K: ${{ secrets.SF511_TOKEN }}
+        run: |
+          for path in "transit/VehiclePositions?agency=RG" "transit/vehiclepositions?agency=RG" "Transit/VehiclePositions?agency=RG" "transit/VehiclePositions?&agency=RG" "transit/servicealerts?agency=RG" "transit/VehiclePositions?agency=SF"; do
+            code=$(curl -s -o /tmp/b -w "%{http_code}" "https://api.511.org/${path}&api_key=${K}")
+            echo "$path -> $code, $(wc -c < /tmp/b) bytes, starts: $(head -c 40 /tmp/b | tr -dc '[:print:]')"
+            sleep 2
+          done
