@@ -45,7 +45,7 @@ async function feed511(path: string) {
   const key = Deno.env.get("511_TOKEN")?.trim();
   if (!key) throw new Error("no511");
   if (Date.now() < bay.pauseUntil) throw new Error("busy");
-  const r = await fetch(`${BAY}${path}&agency=RG&api_key=${encodeURIComponent(key)}`);
+  const r = await fetch(`${BAY}${path}?agency=RG&api_key=${encodeURIComponent(key)}`);
   if (r.status === 429 || r.status === 401 || r.status === 403) { bay.pauseUntil = Date.now() + 600_000; throw new Error("busy"); }
   if (!r.ok) throw new Error(`bay${r.status}`);
   return FeedMessage.decode(new Uint8Array(await r.arrayBuffer()));
@@ -54,7 +54,7 @@ async function feed511(path: string) {
 async function bayVehicles() {
   if (Date.now() - bay.vehicles.at < 90_000) return bay.vehicles;
   try {
-    const m = await feed511("VehiclePositions?");
+    const m = await feed511("VehiclePositions");
     const out = [];
     for (const e of m.entity ?? []) {
       const v: any = e.vehicle, p = v?.position;
@@ -71,7 +71,7 @@ async function bayVehicles() {
 async function bayAlerts() {
   if (Date.now() - bay.alerts.at < 300_000) return bay.alerts;
   try {
-    const m = await feed511("servicealerts?");
+    const m = await feed511("servicealerts");
     const out = [];
     for (const e of m.entity ?? []) {
       const a: any = e.alert;
