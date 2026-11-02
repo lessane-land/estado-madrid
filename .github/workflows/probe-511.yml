@@ -1,0 +1,43 @@
+name: probe-511
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Shapes only (the token is never printed)
+        env:
+          K: ${{ secrets.SF511_TOKEN }}
+        run: |
+          pip -q install gtfs-realtime-bindings
+          python3 - <<'PY'
+          import os, urllib.request, json, time
+          from google.transit import gtfs_realtime_pb2
+          K = os.environ["K"]
+          def get(path):
+              try:
+                  with urllib.request.urlopen(f"https://api.511.org/{path}&api_key={K}", timeout=60) as r:
+                      return r.status, r.read()
+              except Exception as e:
+                  return getattr(e, "code", type(e).__name__), b""
+          st, b = get("transit/TripUpdates?agency=BA")
+          print("TripUpdates BA", st, len(b))
+          if b:
+              m = gtfs_realtime_pb2.FeedMessage(); m.ParseFromString(b)
+              print("header ts", m.header.timestamp, "entities", len(m.entity))
+              for e in m.entity[:3]:
+                  t = e.trip_update
+                  print("trip", t.trip.trip_id, "route", t.trip.route_id, "dir", t.trip.direction_id, "vehicle", t.vehicle.id, "n stu", len(t.stop_time_update))
+                  for u in t.stop_time_update[:4]:
+                      print("   stop", u.stop_id, "seq", u.stop_sequence, "arr", u.arrival.time, "delay", u.arrival.delay, "dep", u.departure.time)
+          time.sleep(2)
+          for path in ["traffic/events?format=json", "toll/programs?format=json", "toll/expresslanes?format=json", "traffic/wzdx?format=json"]:
+              st, b = get(path + ("" if "?" in path else "?"))
+              txt = b.decode("utf-8-sig", "replace")
+              print(path, st, len(b), txt[:500].replace("\n", " "))
+              time.sleep(2)
+          PY
