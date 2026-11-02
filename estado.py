@@ -316,11 +316,12 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
     # Registered app (X-ClientId + passKey) wins when present; portal user (email + password) otherwise.
     client_id, pass_key = os.environ.get("EMT_CLIENT_ID"), os.environ.get("EMT_PASS_KEY")
     email, password = os.environ.get("EMT_EMAIL"), os.environ.get("EMT_PASSWORD")
+    attempts = []
     if client_id and pass_key:
-        login_headers = {"X-ClientId": client_id, "passKey": pass_key}
-    elif email and password:
-        login_headers = {"email": email, "password": password}
-    else:
+        attempts.append(("app", {"X-ClientId": client_id, "passKey": pass_key}))
+    if email and password:
+        attempts.append(("user", {"email": email, "password": password}))
+    if not attempts:
         out["skipped"] = "set EMT_CLIENT_ID and EMT_PASS_KEY (or EMT_EMAIL and EMT_PASSWORD) to include EMT line incidents"
         return out
     if not lines:
@@ -331,10 +332,30 @@ def emt_incidents(lines: list[str], previous: list[dict], now: dt.datetime) -> d
     todo = [l for i, l in enumerate(lines) if i % EMT_SLOTS == slot]
     by_guid: dict[str, dict] = {}
     try:
-        req = urllib.request.Request("https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/",
-                                     headers={**login_headers, "User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            token = json.load(r)["data"][0]["accessToken"]
+        token = None
+        for kind, headers in attempts:
+            # App credentials first; the portal user is the fallback. Only the kind and EMT's code are
+            # recorded, never anything from the headers.
+            req = urllib.request.Request("https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/",
+                                         headers={**headers, "User-Agent": UA})
+            try:
+                with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                    body = json.load(r)
+            except Exception as e:  # noqa: BLE001
+                out.setdefault("login", []).append(f"{kind}: {type(e).__name__}")
+                continue
+            code = str(body.get("code", ""))
+            data = body.get("data") or []
+            if code in ("00", "01") and data and data[0].get("accessToken"):
+                token = data[0]["accessToken"]
+                out["auth"] = kind
+                counter = data[0].get("apiCounter") or {}
+                if counter:
+                    out["quota"] = {"used_today": counter.get("current"), "daily": counter.get("dailyUse")}
+                break
+            out.setdefault("login", []).append(f"{kind}: code {code}")
+        if token is None:
+            raise RuntimeError("no EMT login worked")
         logged_shape = False
         for line in todo:
             req = urllib.request.Request(f"https://openapi.emtmadrid.es/v1/transport/busemtmad/lines/incidents/{line}/",
