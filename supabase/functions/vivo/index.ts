@@ -7,6 +7,8 @@
 //   GET ?city=bay&what=roads     road closures and lane closures (511 WZDx) and express lane and bridge tolls
 // The 511 token is the secret 511_TOKEN. Its default quota is 60 calls an hour; the refresh times in BAY_EVERY
 // spend about 50 (vehicles 20, BART 20, alerts 6, roads 2, tolls 2). After a refusal we wait 10 min.
+//   GET ?what=planes&city=madrid|bay   aircraft within about 110 km (adsb.fi, adsb.lol as fallback; no key; cached 10 s)
+//   GET ?city=bay&what=ships     vessels in the Bay (aisstream.io, secret AISSTREAM_KEY; a 6 s listen, cached 60 s)
 // EMT credentials come from the function's secrets: EMT_CLIENT_ID + EMT_PASS_KEY first, EMT_EMAIL + EMT_PASSWORD as fallback.
 // Never echo a secret, a token or a request header in a response or a log.
 
@@ -162,6 +164,64 @@ async function bayAlerts() {
   });
 }
 
+// ---- Planes (both cities) ----
+const SKY: Record<string, [number, number]> = { madrid: [40.45, -3.62], bay: [37.66, -122.25] };
+const planes = new Map<string, Cache>();
+async function getPlanes(city: string) {
+  const c = planes.get(city) ?? empty(); planes.set(city, c);
+  const [lat, lon] = SKY[city];
+  return due(c, 10_000, async () => {
+    const urls = [`https://opendata.adsb.fi/api/v2/lat/${lat}/lon/${lon}/dist/60`, `https://api.adsb.lol/v2/point/${lat}/${lon}/60`];
+    for (const u of urls) {
+      try {
+        const r = await fetch(u, { headers: { "User-Agent": "madrid-se-mueve (lessane.es)" } });
+        if (!r.ok) continue;
+        const d = await r.json();
+        return (d.ac ?? d.aircraft ?? []).filter((a: any) => Number.isFinite(a.lat) && Number.isFinite(a.lon)).map((a: any) => ({
+          id: String(a.hex ?? ""), f: String(a.flight ?? "").trim(), lat: +a.lat.toFixed(4), lon: +a.lon.toFixed(4),
+          alt: a.alt_baro === "ground" ? 0 : Number(a.alt_baro ?? a.alt_geom ?? 0), gs: Number(a.gs ?? 0), trk: Number(a.track ?? a.true_heading ?? 0),
+          t: String(a.t ?? ""), sq: String(a.squawk ?? "") }));
+      } catch { /* try the next network */ }
+    }
+    throw new Error("planes");
+  });
+}
+
+// ---- Ships (the Bay) ----
+const ships = empty();
+const SHIP_BOX = [[37.40, -122.65], [38.15, -122.00]];
+async function getShips() {
+  return due(ships, 60_000, () => new Promise<unknown[]>((resolve, reject) => {
+    const key = Deno.env.get("AISSTREAM_KEY")?.trim();
+    if (!key) return reject(new Error("noais"));
+    const seen = new Map<string, any>(), names = new Map<string, any>();
+    let ws: WebSocket;
+    try { ws = new WebSocket("wss://stream.aisstream.io/v0/stream"); } catch { return reject(new Error("ships")); }
+    const done = () => {
+      try { ws.close(); } catch { /* closed */ }
+      const prev = new Map((ships.data as any[]).map((x) => [x.id, x]));
+      const out = [...seen.values()].map((x) => ({ ...x, ...(names.get(x.id) ?? (prev.get(x.id) ? { name: prev.get(x.id).name, to: prev.get(x.id).to, type: prev.get(x.id).type } : {})) }));
+      // Keep ships heard in the last 10 minutes so quiet ones do not blink out between listens.
+      for (const [id, x] of prev) if (!seen.has(id) && Date.now() - (x.at ?? 0) < 600_000) out.push(x);
+      resolve(out);
+    };
+    const timer = setTimeout(done, 6000);
+    ws.onopen = () => ws.send(JSON.stringify({ APIKey: key, BoundingBoxes: [SHIP_BOX], FilterMessageTypes: ["PositionReport", "ShipStaticData", "StandardClassBPositionReport"] }));
+    ws.onerror = () => { clearTimeout(timer); if (seen.size) done(); else reject(new Error("ships")); };
+    ws.onmessage = async (ev) => {
+      try {
+        const m = JSON.parse(typeof ev.data === "string" ? ev.data : await (ev.data as Blob).text());
+        const id = String(m.MetaData?.MMSI ?? "");
+        if (!id) return;
+        const pr = m.Message?.PositionReport ?? m.Message?.StandardClassBPositionReport;
+        if (pr) seen.set(id, { id, name: String(m.MetaData?.ShipName ?? "").trim(), lat: +Number(pr.Latitude).toFixed(5), lon: +Number(pr.Longitude).toFixed(5), sog: Number(pr.Sog ?? 0), cog: Number(pr.Cog ?? 0), at: Date.now() });
+        const sd = m.Message?.ShipStaticData;
+        if (sd) names.set(id, { name: String(sd.Name ?? "").trim(), to: String(sd.Destination ?? "").trim(), type: Number(sd.Type ?? 0) });
+      } catch { /* skip a bad message */ }
+    };
+  }));
+}
+
 async function getTrains() {
   if (Date.now() - trains.at < 15_000) return trains.data;
   const r = await fetch(RENFE);
@@ -243,6 +303,11 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const what = url.searchParams.get("what");
   try {
+    if (what === "planes") {
+      const city = url.searchParams.get("city") === "bay" ? "bay" : "madrid";
+      const p = await getPlanes(city); return json({ at: p.at, planes: p.data }, 200, 8);
+    }
+    if (url.searchParams.get("city") === "bay" && what === "ships") { const s = await getShips(); return json({ at: s.at, ships: s.data }, 200, 30); }
     if (url.searchParams.get("city") === "bay") {
       if (what === "vehicles") {
         const v = await bayVehicles();
@@ -275,7 +340,7 @@ Deno.serve(async (req) => {
     return json({ error: "what must be trains or buses" }, 400);
   } catch (e) {
     const m = e instanceof Error ? e.message : "";
-    const kind = ["renfe", "login", "busy", "no511"].includes(m) || /^bay\d{3}$/.test(m) ? m : "upstream";
+    const kind = ["renfe", "login", "busy", "no511", "planes", "ships", "noais"].includes(m) || /^bay\d{3}$/.test(m) ? m : "upstream";
     return json({ error: kind }, 502, 5);
   }
 });

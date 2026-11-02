@@ -39,6 +39,7 @@ horario, Servicio especial). Severity: rojo only for no service / suspension, el
 ## Bay Area (Madrid se mueve, Bay edition)
 - `bay/build_bay.py` builds `graph-bay.json` from 511's regional GTFS (`.github/workflows/bay-graph.yml`, monthly, secret `SF511_TOKEN`):
   rail, tram, cable car and ferry stations and lines in the graph-app.json shape plus `a` (agency), `routes` for bus labels and `alias` (platform id to station id).
+- Also `vivo?what=planes&city=madrid|bay` (adsb.fi, adsb.lol fallback, no key, 10 s) and `vivo?city=bay&what=ships` (aisstream.io, secret `AISSTREAM_KEY`, 6 s listen, 60 s cache).
 - The Edge Function `vivo?city=bay&what=vehicles|alerts|roads` reads 511 GTFS-RT with the Supabase secret `511_TOKEN`.
   The default 511 quota is 60 calls an hour: vehicles and BART every 3 min, alerts every 10 min, roads and tolls every 30 min (about 50 calls an hour), 10 min pause after a refusal.
 
