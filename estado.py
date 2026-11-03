@@ -21,6 +21,7 @@ import argparse
 import datetime as dt
 import html
 import json
+import math
 import os
 import re
 import sys
@@ -434,7 +435,7 @@ def merge_same_notice(incidents: list[dict]) -> list[dict]:
 
 # Not disruption: dropped before they reach the row (and so before line_episodes).
 EMT_NOT_DISRUPTION = re.compile(
-    r"^(refuerzo|cambio( de)? horario|horario|servicio especial|nueva l[ií]nea|ampliaci[oó]n|informaci[oó]n)", re.I)
+    r"^(refuerzo|cambio( de)? horario|horario|servicio especial|nueva l[ií]nea|ampliaci[oó]n|informaci[oó]n|finalizaci[oó]n)", re.I)
 EMT_CHANNEL = re.compile(r"canal de noticias|informaciones de inter[eé]s para el cliente", re.I)
 
 
@@ -549,6 +550,119 @@ def for_commute(commute: dict, incidents: list[dict], levels: dict) -> dict:
     return {"name": commute.get("name"), "verdict": verdict, "incidents": hits, "forecast": forecasts}
 
 
+
+# ---------------------------------------------------------------- Where a bus notice applies
+
+# EMT notices carry no stops and no coordinates (12 fields: title, description, dates, cause, effect...).
+# The text does: stop numbers ("traslada la parada 5560 a la parada 333") and street names
+# ("modificaciones en sus itinerarios en avenida de Rafaela Ybarra"). Stop numbers win; street names are
+# matched against the names of the stops the notice's lines serve. A notice we cannot place stays unplaced.
+STREET_WORDS = re.compile(r"^(?:(?:la|las|el|los|calles?|c/|avenida|avda\.?|av\.?|paseo|p[ºo]\.?|glorieta|plaza|pza\.?|"
+                          r"carrera|carr\.?\s*[ªa]?|ronda|camino|puente|traves[ií]a|zona|de|del|de la|de los|de las)\s+)+", re.I)
+PLACE_STOP = {"documento adjunto", "sus itinerarios", "su desarrollo", "ambos sentidos", "sentido", "la zona"}
+
+
+def bus_stop_index(graph_app_path: str) -> dict | None:
+    """EMT stops from graph-app.json: id (as EMT writes it) -> folded name, position, line labels."""
+    try:
+        g = json.load(open(graph_app_path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    labels = {l["i"]: str(l.get("b") or l["i"].split(":")[-1]) for l in g["lines"] if l.get("m") == "emt"}
+    out = {}
+    for st in g["stops"]:
+        if st.get("m") != "emt":
+            continue
+        out[st["i"].split(":", 1)[1]] = {"f": fold(st["n"]), "la": st["la"], "lo": st["lo"],
+                                         "l": {bus_label(labels.get(x, x.split(":")[-1])) for x in st.get("l", [])}}
+    return out
+
+
+def bus_label(label: str) -> str:
+    """'002' and '2' are the same EMT line on paper; compare without leading zeros."""
+    return label.upper().lstrip("0") or "0"
+
+
+def notice_places(title: str, text: str) -> list[str]:
+    """Street or place names a notice says it happens in, folded. Empty when it names none."""
+    found = []
+    m = re.match(r"^[^:]{3,40}:\s*(.+?)(?:\.\s*Afectad.*)?$", title)
+    if m:
+        found.append(m.group(1))
+    for pat in (r"itinerarios? en (.+?)(?: por | seg[uú]n|\.|;|$)",
+                r"manifestaci[oó]n en (.+?)(?:,? las l[ií]neas| por | seg[uú]n|\.|;|$)",
+                r"cortes? (?:de tr[aá]fico )?en (.+?)(?:,? las l[ií]neas| por | seg[uú]n|\.|;|$)"):
+        found += re.findall(pat, text, re.I)
+    places = []
+    for chunk in found:
+        for part in re.split(r",\s*|\s+y\s+|\s+e\s+|\s+con\s+|\s+-\s+", chunk):
+            part = STREET_WORDS.sub("", part.strip())
+            f = fold(part)
+            if len(f) >= 4 and f not in PLACE_STOP and f not in places and not re.fullmatch(r"[\d ]+", f):
+                places.append(f)
+    return places
+
+
+def _km(a: tuple, b: tuple) -> float:
+    return math.hypot((b[1] - a[1]) * 111.32 * math.cos(math.radians(a[0])), (b[0] - a[0]) * 110.6)
+
+
+def locate_bus_notice(inc: dict, idx: dict) -> None:
+    """Add 'stops' (EMT ids) and 'at' {lat, lon} to a bus notice when its text says where it happens."""
+    text = inc.get("text") or ""
+    lines = {bus_label(l) for l in inc.get("lines") or []}
+    ids = []
+    for m in re.finditer(r"paradas?\s+(?:n[ºo.]*\s*)?((?:\d{2,5})(?:\s*(?:,|y)\s*\d{2,5})*)", text, re.I):
+        for n in re.findall(r"\d{2,5}", m.group(1)):
+            if n in idx and n not in ids:
+                ids.append(n)
+    if not ids:
+        for place in notice_places(inc.get("title") or "", text):
+            rx = re.compile(rf"(?:^| ){re.escape(place)}(?: |$)")
+            hits = [k for k, v in idx.items() if rx.search(v["f"])]
+            on_line = [k for k in hits if idx[k]["l"] & lines]
+            # Stops of the notice's own lines; otherwise any stop of that name if they sit together (one place).
+            pick = on_line or hits
+            if pick and not on_line:
+                c = (sum(idx[k]["la"] for k in pick) / len(pick), sum(idx[k]["lo"] for k in pick) / len(pick))
+                if max(_km(c, (idx[k]["la"], idx[k]["lo"])) for k in pick) > 1.0:
+                    pick = []
+            ids += [k for k in pick if k not in ids]
+    if not ids:
+        return
+    ids = ids[:40]
+    inc["stops"] = ids
+    inc["at"] = {"lat": round(sum(idx[k]["la"] for k in ids) / len(ids), 5),
+                 "lon": round(sum(idx[k]["lo"] for k in ids) / len(ids), 5)}
+
+
+def merge_cross_source(incidents: list[dict]) -> list[dict]:
+    """The same bus event often comes from CRTM and from EMT, worded differently ("Desvío líneas EMT
+    Manifestación Virgen de los Peligros" / "Manifestación en zona Cortes"). Same lines and the same window
+    (ends within an hour of each other) is one event: keep EMT's (it has the effect and the guid), drop CRTM's."""
+    emt = [i for i in incidents if i.get("source") == "EMT"]
+    out = []
+    for inc in incidents:
+        if inc.get("source") == "CRTM" and inc.get("mode") == "emt" and inc.get("until"):
+            mine = {bus_label(l) for l in inc.get("lines") or []}
+            end = dt.datetime.fromisoformat(inc["until"])
+            twin = None
+            for e in emt:
+                theirs = {bus_label(l) for l in e.get("lines") or []}
+                if not e.get("until") or not mine or len(mine & theirs) / len(mine | theirs) < .8:
+                    continue
+                if abs(dt.datetime.fromisoformat(e["until"]) - end) <= dt.timedelta(hours=1):
+                    twin = e
+                    break
+            if twin is not None:
+                twin.setdefault("also", []).append({"source": "CRTM", "title": inc.get("title")})
+                for k in ("stops", "at"):
+                    if k in inc and k not in twin:
+                        twin[k] = inc[k]
+                continue
+        out.append(inc)
+    return out
+
 # ---------------------------------------------------------------- Around a point (needs graph.json)
 
 def normalise_label(mode: str, label: str) -> str:
@@ -577,12 +691,14 @@ def segment_indices(names: list[str], i: int, j: int, loop: bool) -> list[int]:
     return forward if len(forward) <= len(backward) else backward
 
 
-def for_here(lat: float, lon: float, radius: float, incidents: list[dict], levels: dict, graph_path: str) -> dict:
+def for_here(lat: float, lon: float, radius: float, incidents: list[dict], levels: dict, graph_path: str,
+             graph_app_path: str = "graph-app.json") -> dict:
     """Ring 1 lines coloured by the incidents that touch them, plus one-hop spread."""
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from around import Graph  # local module
     g = Graph(graph_path)
     near = g.around(lat, lon, radius)
+    stops = bus_stop_index(graph_app_path) or {}
 
     def incidents_for(line: dict) -> list[dict]:
         hits = []
@@ -606,6 +722,12 @@ def for_here(lat: float, lon: float, radius: float, incidents: list[dict], level
                 except ValueError:
                     hit["touches_you"] = None
                     hit["segment_known"] = False
+            elif inc.get("at"):
+                # A placed bus notice: it touches you only when one of its stops (or its point) is in your ring;
+                # otherwise it is "elsewhere on the line" and does not colour it.
+                pts = [(stops[k]["la"], stops[k]["lo"]) for k in inc.get("stops") or [] if k in stops] or [(inc["at"]["lat"], inc["at"]["lon"])]
+                hit["touches_you"] = any(_km((lat, lon), p) * 1000 <= radius for p in pts)
+                hit["segment_known"] = True
             else:
                 hit["touches_you"] = None  # whole line or unknown scope: assume it matters
                 hit["segment_known"] = False
@@ -669,6 +791,7 @@ def main() -> int:
     ap.add_argument("--at", help="lat,lon: status for the lines around this point (needs graph.json)")
     ap.add_argument("--radius", type=float, default=600)
     ap.add_argument("--graph", default="graph.json")
+    ap.add_argument("--graph-app", default="graph-app.json", help="for placing bus notices on their stops")
     ap.add_argument("--scenario", help="JSON file with invented incidents and levels, replaces the live sources")
     ap.add_argument("--previous", help="JSON file with the previous run's incidents, to keep 'since' stable")
     args = ap.parse_args()
@@ -695,6 +818,11 @@ def main() -> int:
         emt = emt_incidents(emt_line_labels(args.graph), previous, now)
 
     incidents = renfe["incidents"] + crtm["incidents"] + emt["incidents"]
+    idx = bus_stop_index(args.graph_app)
+    if idx:
+        for i in incidents:
+            if i.get("mode") == "emt" and "stops" not in i and "at" not in i:
+                locate_bus_notice(i, idx)
     if not args.scenario:
         carry_since(incidents, previous, now)
         incidents = [i for i in incidents if still_active(i, now)]
@@ -710,6 +838,7 @@ def main() -> int:
                     since = starts
             if since and since > now:
                 i["upcoming"] = True
+    incidents = merge_cross_source(incidents)
     status = {
         "generated": dt.datetime.now(dt.timezone.utc).isoformat(),
         "levels": crtm["levels"],
@@ -724,7 +853,7 @@ def main() -> int:
         status["for_you"] = for_commute(commute, incidents, crtm["levels"])
     if args.at:
         lat, lon = (float(x) for x in args.at.split(","))
-        status["for_here"] = for_here(lat, lon, args.radius, incidents, crtm["levels"], args.graph)
+        status["for_here"] = for_here(lat, lon, args.radius, incidents, crtm["levels"], args.graph, args.graph_app)
     json.dump(status, sys.stdout, ensure_ascii=False, indent=2)
     print()
     return 0

@@ -1,0 +1,167 @@
+{
+ "name": "EMT notices far from Lavapiés, one on Ronda de Valencia, one march from both CRTM and EMT",
+ "levels": {
+  "metro": "Verde",
+  "metro_ligero": "Verde",
+  "emt": "Verde",
+  "interurbanos": "Verde",
+  "cercanias": "Verde"
+ },
+ "incidents": [
+  {
+   "source": "CRTM",
+   "mode": "emt",
+   "lines": [
+    "002",
+    "3",
+    "5",
+    "9",
+    "15",
+    "20",
+    "46",
+    "51",
+    "52",
+    "53",
+    "150",
+    "M1",
+    "M3"
+   ],
+   "severity": "amarillo",
+   "title": "Desvío líneas EMT Manifestación Virgen de los Peligros - carr.ª de San Jerónimo",
+   "text": "Desvío líneas EMT Manifestación Virgen de los Peligros - carr.ª de San Jerónimo. El miércoles 4 de noviembre, de 09:30 a 12:00 horas, por manifestación en calles Virgen de los Peligros, Sevilla y carrera de San Jerónimo, las líneas 002, 3, 5, 9, 15, 20, 46, 51, 52, 53, 150, M1 y M3 se verán afectadas.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2026-11-04T11:00:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "34",
+    "35",
+    "118",
+    "119",
+    "N26"
+   ],
+   "severity": "amarillo",
+   "title": "Traslado de Parada: General Ricardos. Afectadas 5 líneas de EMT.",
+   "text": "Traslado de Parada: General Ricardos. Afectadas 5 líneas de EMT.. Desde las 10:00 horas del 13 de octubre a fin de obras, las líneas 34, 35, 118, 119 y N26 trasladan provisionalmente la parada 5560, ubicada en General Ricardos 78, a la parada 333 ubicada en General Ricardos 72. Ver más detalle en documento adjunto.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2026-11-13T18:00:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "31",
+    "36",
+    "39",
+    "65",
+    "N19",
+    "SC1"
+   ],
+   "severity": "amarillo",
+   "title": "Obras: Huerta de Castañeda. Afectadas 6 líneas de EMT.",
+   "text": "Obras: Huerta de Castañeda. Afectadas 6 líneas de EMT.. Desde las 9:00 horas aproximadamente del 27 de octubre a fin de obras, las líneas 31, 36, 39, 65, N19 y SC1 tendrán retenciones y modificaciones en sus itinerarios en Huerta de Castañeda. Ver más detalle en documento adjunto.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2026-11-28T22:59:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "002",
+    "3",
+    "5",
+    "9",
+    "15",
+    "20",
+    "46",
+    "51",
+    "52",
+    "53",
+    "150",
+    "M1",
+    "M3"
+   ],
+   "severity": "amarillo",
+   "title": "Manifestación en zona Cortes. Afectadas 13 líneas de EMT.",
+   "text": "Manifestación en zona Cortes. Afectadas 13 líneas de EMT.. El 4 de noviembre de 9:30 a 12:00 horas aproximadamente, las líneas 002, 3, 5, 9, 15, 20, 46, 51, 52, 53, 150, M1 y M3, tendrán retenciones y modificaciones en sus itinerarios en Virgen de los Peligros, Sevilla y carrera de San Jerónimo por manifestación, según su desarrollo y de acuerdo con las restricciones de tráfico que realice Policía Municipal. Ver más detalle en documento adjunto.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2026-11-04T11:00:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "6",
+    "60",
+    "81",
+    "N15"
+   ],
+   "severity": "amarillo",
+   "title": "Obras: Avenida Rafaela Ybarra. Afectadas 4 líneas de EMT.",
+   "text": "Obras: Avenida Rafaela Ybarra. Afectadas 4 líneas de EMT.. Desde las 8:30 horas aproximadamente del 3 de noviembre a fin de obras, las líneas 6, 60, 81 y N15 tendrán retenciones y modificaciones en sus itinerarios en avenida de Rafaela Ybarra. Ver más detalle en documento adjunto.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2026-12-03T18:00:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "55",
+    "118",
+    "N16",
+    "N17",
+    "SC1"
+   ],
+   "severity": "amarillo",
+   "title": "Traslado de Parada: glorieta del Valle de Oro. Afectadas 5 líneas de EMT.",
+   "text": "Traslado de Parada: glorieta del Valle de Oro. Afectadas 5 líneas de EMT.. Desde las 8:00 horas del 28 de octubre a fin de obras, las líneas 55, 118, N16, N17 y SC1 trasladan provisionalmente la parada 5601, ubicada en glorieta del Valle de Oro con General Ricardos, unos 25 metros después de la misma calle. Ver más detalle en documento adjunto.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2027-10-28T17:00:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "6",
+    "59",
+    "78",
+    "85",
+    "148"
+   ],
+   "severity": "amarillo",
+   "title": "Traslado de Parada: Embajadores. Afectadas 5 líneas de EMT.",
+   "text": "Traslado de Parada: Embajadores. Afectadas 5 líneas de EMT.. Desde las 8:00 horas del 7 de octubre a fin de obras, las líneas 6, 59, 78, 85 y 148 trasladan provisionalmente la parada 1928, ubicada en Embajadores 114, al número 118 de la misma calle. Ver más detalle en documento adjunto.",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2027-10-07T17:00:00+00:00"
+  },
+  {
+   "source": "EMT",
+   "mode": "emt",
+   "lines": [
+    "27",
+    "34",
+    "36",
+    "41",
+    "62",
+    "119",
+    "C1",
+    "C2"
+   ],
+   "severity": "amarillo",
+   "scope": null,
+   "since": "2026-11-01T08:00:00+00:00",
+   "until": "2026-12-01T18:00:00+00:00",
+   "title": "Obras: Ronda de Valencia. Afectadas 8 líneas de EMT.",
+   "text": "Obras: Ronda de Valencia. Afectadas 8 líneas de EMT.. Desde el 1 de noviembre a fin de obras, las líneas 27, 34, 36, 41, 62, 119, C1 y C2 tendrán retenciones y modificaciones en sus itinerarios en ronda de Valencia. Ver más detalle en documento adjunto."
+  }
+ ]
+}

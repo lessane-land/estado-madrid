@@ -24,6 +24,12 @@ Status of Madrid public transport around a point, with impact per line. Read REA
 `source`, `mode`, `lines`, `severity`, `title`, `text`, `scope`, `since`, `until`, optional `upcoming` (true when
 `since` is in the future: announced, not yet in force; never colours a line, never opens an episode). The app (madrid-hoy, HoyKit)
 decodes these; adding a field is fine, renaming or removing one needs a matching app change.
+Bus notices (EMT and CRTM's `mode: emt`) may carry `stops` (EMT stop ids as in graph-app.json, e.g. "1928") and
+`at` {lat, lon} (their centre). EMT sends no location, so they come from the text: stop numbers first ("traslada
+la parada 5560 a la parada 333"), else street names matched against the stop names of the notice's lines. A placed
+notice touches you only when one of its stops is inside your ring; elsewhere on the line it does not colour it.
+Unplaced notices keep the old rule (whole line). The same event from CRTM and EMT (same lines, ends within an hour)
+is one incident: EMT's, with the CRTM one under `also: [{source, title}]`.
 `graph-app.json` per line: `s` ordered stops (rail: merged union of every itinerary, both directions and branches, so
 every stop that lists a rail line is in its sequence; buses: the drawn direction plus same-direction branches),
 `lp` loop flag, `sh` Google encoded polyline (precision 5, simplified to 8 m), `shk: "stops"` when the feed's
@@ -51,4 +57,5 @@ publish.py after every poll; 15 min gap tolerance, `until` closes, 120 days kept
 ## State
 1 Nov 2026: Supabase pg_cron is the clock (verified every 5 min). Line shapes exported. line_episodes added. 24 tests.
 Names: source casing kept unless shouting; separators and acronyms handled.
-Next: app phase 2 reads line_episodes; EMT app credentials when MobilityLabs approves.
+3 Nov 2026: EMT app key live (auth app, 250,000 calls a day). Bus notices placed on their stops (stops, at) and CRTM/EMT twins merged. 37 tests.
+Next: app phase 2 reads line_episodes; remove EMT_EMAIL and EMT_PASSWORD once the app key has run a few days.

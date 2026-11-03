@@ -13,6 +13,12 @@ def here(at, scenario, radius=400):
     return {l["label"]: l for l in h["lines"]}, h
 
 
+def full(at, scenario, radius=400):
+    out = subprocess.run([sys.executable, "-I", str(HERE / "estado.py"), "--at", at, "--radius", str(radius),
+                          "--scenario", str(HERE / "scenarios" / scenario)], capture_output=True, text=True, check=True).stdout
+    return json.loads(out)
+
+
 class Scenarios(unittest.TestCase):
     def test_nothing_happening_is_all_green(self):
         lines, h = here(LAVAPIES, "todo-verde.json")
@@ -237,6 +243,35 @@ class EmtNotices(unittest.TestCase):
         self.assertEqual(n["severity"], "amarillo")
         self.assertTrue({"001", "1", "C2", "27"} <= set(n["lines"]))
 
+
+
+    # EMT notices: where they apply (scenario emt-donde.json, Lavapiés, 400 m ring).
+    def test_emt_notices_far_away_do_not_colour_lines_at_lavapies(self):
+        lines, _ = here(LAVAPIES, "emt-donde.json")
+        for label in ("N15", "N17"):   # Rafaela Ybarra (Usera), Valle de Oro (Carabanchel)
+            self.assertEqual(lines[label]["status"], "verde")
+            self.assertTrue(all(h["touches_you"] is False for h in lines[label]["incidents"]))
+        ricardos = [h for h in lines["34"]["incidents"] if "General Ricardos" in h["title"]]
+        self.assertTrue(ricardos and ricardos[0]["touches_you"] is False)
+
+    def test_emt_notice_in_the_ring_colours_its_lines(self):
+        lines, _ = here(LAVAPIES, "emt-donde.json")
+        self.assertEqual(lines["27"]["status"], "amarillo")   # Ronda de Valencia works, a few streets away
+
+    def test_emt_notices_are_placed_on_their_stops(self):
+        incs = {i["title"].split(".")[0]: i for i in full(LAVAPIES, "emt-donde.json")["incidents"]}
+        self.assertEqual(incs["Traslado de Parada: Embajadores"]["stops"], ["1928"])   # the stop number in the text
+        self.assertIn("5601", incs["Traslado de Parada: glorieta del Valle de Oro"]["stops"])
+        ybarra = incs["Obras: Avenida Rafaela Ybarra"]
+        self.assertGreater(len(ybarra["stops"]), 3)                                     # street name, line 6 and friends
+        self.assertTrue(40.36 < ybarra["at"]["lat"] < 40.39 and -3.73 < ybarra["at"]["lon"] < -3.70)
+
+    def test_same_march_from_crtm_and_emt_is_one_incident(self):
+        incs = full(LAVAPIES, "emt-donde.json")["incidents"]
+        march = [i for i in incs if "Peligros" in i["title"] or "zona Cortes" in i["title"]]
+        self.assertEqual(len(march), 1)
+        self.assertEqual(march[0]["source"], "EMT")
+        self.assertEqual(march[0]["also"][0]["source"], "CRTM")
 
 if __name__ == "__main__":
     unittest.main()
