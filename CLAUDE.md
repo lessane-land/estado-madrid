@@ -57,5 +57,5 @@ publish.py after every poll; 15 min gap tolerance, `until` closes, 120 days kept
 ## State
 1 Nov 2026: Supabase pg_cron is the clock (verified every 5 min). Line shapes exported. line_episodes added. 24 tests.
 Names: source casing kept unless shouting; separators and acronyms handled.
-3 Nov 2026: EMT app key live (auth app, 250,000 calls a day). Bus notices placed on their stops (stops, at) and CRTM/EMT twins merged. 37 tests.
+3 Nov 2026: EMT app key live (auth app, 250,000 calls a day). Bus notices placed on their stops (stops, at) and CRTM/EMT twins merged; ported to the app (madrid-hoy fc65b6d). 37 tests.
 Next: app phase 2 reads line_episodes; remove EMT_EMAIL and EMT_PASSWORD once the app key has run a few days.
